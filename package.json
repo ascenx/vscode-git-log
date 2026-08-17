@@ -1,0 +1,216 @@
+{
+  "name": "git-log",
+  "displayName": "Git Log — Commit Graph & History",
+  "description": "A visual Git log, commit graph, history browser, and repository operations extension for Visual Studio Code.",
+  "version": "0.0.1",
+  "publisher": "ascenx",
+  "license": "MIT",
+  "icon": "media/git-log.png",
+  "private": true,
+  "engines": {
+    "vscode": "^1.105.0"
+  },
+  "categories": [
+    "SCM Providers",
+    "Visualization"
+  ],
+  "keywords": [
+    "git",
+    "git log",
+    "commit graph",
+    "history"
+  ],
+  "main": "./dist/extension.js",
+  "activationEvents": [
+    "onCommand:gitLogWorkbench.openLog",
+    "onCommand:gitLogWorkbench.editor.showLineHistory",
+    "onCommand:gitLogWorkbench.editor.showSelectionHistory",
+    "onCommand:gitLogWorkbench.editor.showFileHistory",
+    "onCommand:gitLogWorkbench.editor.compareFileWithRef",
+    "onView:gitLogWorkbench.log"
+  ],
+  "contributes": {
+    "commands": [
+      {
+        "command": "gitLogWorkbench.openLog",
+        "title": "Open Log",
+        "category": "Git Log",
+        "icon": "$(git-branch)"
+      },
+      {
+        "command": "gitLogWorkbench.editor.showLineHistory",
+        "title": "Show History for Current Line",
+        "category": "Git Log"
+      },
+      {
+        "command": "gitLogWorkbench.editor.showSelectionHistory",
+        "title": "Show History for Selection",
+        "category": "Git Log"
+      },
+      {
+        "command": "gitLogWorkbench.editor.showFileHistory",
+        "title": "Show File History",
+        "category": "Git Log"
+      },
+      {
+        "command": "gitLogWorkbench.editor.compareFileWithRef",
+        "title": "Compare File with Branch or Tag…",
+        "category": "Git Log"
+      }
+    ],
+    "submenus": [
+      {
+        "id": "gitLogWorkbench.editorContext",
+        "label": "Git Log"
+      }
+    ],
+    "menus": {
+      "editor/context": [
+        {
+          "submenu": "gitLogWorkbench.editorContext",
+          "when": "resourceScheme == file",
+          "group": "navigation@20"
+        }
+      ],
+      "gitLogWorkbench.editorContext": [
+        {
+          "command": "gitLogWorkbench.editor.showLineHistory",
+          "when": "resourceScheme == file && !editorHasSelection",
+          "group": "1_history@1"
+        },
+        {
+          "command": "gitLogWorkbench.editor.showSelectionHistory",
+          "when": "resourceScheme == file && editorHasSelection",
+          "group": "1_history@1"
+        },
+        {
+          "command": "gitLogWorkbench.editor.showFileHistory",
+          "when": "resourceScheme == file",
+          "group": "1_history@2"
+        },
+        {
+          "command": "gitLogWorkbench.editor.compareFileWithRef",
+          "when": "resourceScheme == file",
+          "group": "2_compare@1"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "panel": [
+        {
+          "id": "gitLogWorkbench",
+          "title": "Git Log",
+          "icon": "media/git-log.png"
+        }
+      ]
+    },
+    "views": {
+      "gitLogWorkbench": [
+        {
+          "id": "gitLogWorkbench.log",
+          "name": "Git Log",
+          "type": "webview"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Git Log",
+      "properties": {
+        "gitLogWorkbench.git.path": {
+          "type": "string",
+          "default": "git",
+          "description": "Path to the Git executable."
+        },
+        "gitLogWorkbench.repositories.scanDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 8,
+          "description": "Maximum directory depth used when discovering nested repositories."
+        },
+        "gitLogWorkbench.repositories.exclude": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "**/node_modules/**",
+            "**/.worktrees/**"
+          ],
+          "description": "Glob patterns excluded from repository discovery."
+        },
+        "gitLogWorkbench.log.initialPageSize": {
+          "type": "number",
+          "default": 200,
+          "minimum": 20,
+          "maximum": 2000
+        },
+        "gitLogWorkbench.log.pageSize": {
+          "type": "number",
+          "default": 500,
+          "minimum": 20,
+          "maximum": 5000
+        },
+        "gitLogWorkbench.performance.maxCachedCommits": {
+          "type": "number",
+          "default": 5000,
+          "minimum": 200,
+          "maximum": 50000
+        },
+        "gitLogWorkbench.performance.maxDiffFileBytes": {
+          "type": "number",
+          "default": 5242880,
+          "minimum": 1024,
+          "maximum": 104857600,
+          "description": "Maximum historical file size opened in the built-in text diff editor."
+        },
+        "gitLogWorkbench.debug.logLevel": {
+          "type": "string",
+          "enum": [
+            "off",
+            "error",
+            "debug"
+          ],
+          "default": "off"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "clean": "node scripts/clean.mjs",
+    "build": "node scripts/build.mjs",
+    "watch": "node scripts/build.mjs --watch",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "vitest run",
+    "test:unit": "vitest run test/unit",
+    "test:integration": "npm run build && node ./scripts/run-integration.mjs",
+    "test:performance": "vitest run test/performance",
+    "package": "npm run clean && npm run build && vsce package --no-dependencies --allow-missing-repository --no-rewrite-relative-links"
+  },
+  "dependencies": {
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
+    "shiki": "^3.23.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@testing-library/jest-dom": "^6.9.1",
+    "@testing-library/react": "^16.3.0",
+    "@types/node": "^22.18.0",
+    "@types/react": "^19.2.0",
+    "@types/react-dom": "^19.2.0",
+    "@types/vscode": "^1.105.0",
+    "@vscode/test-electron": "^3.1.0",
+    "@vscode/vsce": "^3.9.2",
+    "esbuild": "^0.28.2",
+    "eslint": "^10.0.0",
+    "eslint-plugin-react-hooks": "^7.0.1",
+    "eslint-plugin-react-refresh": "^0.4.24",
+    "jsdom": "^27.0.0",
+    "prettier": "^3.6.2",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.67.0",
+    "vitest": "^4.1.10"
+  }
+}
