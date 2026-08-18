@@ -35,6 +35,7 @@ import { getVsCodeApi } from './vscodeApi';
 import { CommitGraphCell } from './CommitGraphCell';
 import { getVirtualRange } from './virtualRange';
 import { buildFileTree, type FileTreeNode } from './buildFileTree';
+import { buildRefTree, type RefTreeNode } from './buildRefTree';
 import { advanceCommitWindow } from './commitWindow';
 
 const refGroups: readonly { label: string; kind: RefKind }[] = [
@@ -511,6 +512,114 @@ function FileTreeNodes({
   );
 }
 
+function RefTreeNodes({
+  nodes,
+  depth,
+  group,
+  folderKeyPrefix,
+  collapsedFolders,
+  forceExpanded,
+  onToggleFolder,
+  onSelect,
+  onKeyDown,
+  onContextMenu,
+}: {
+  nodes: RefTreeNode[];
+  depth: number;
+  group: (typeof refGroups)[number];
+  folderKeyPrefix: string;
+  collapsedFolders: ReadonlySet<string>;
+  forceExpanded: boolean;
+  onToggleFolder(key: string): void;
+  onSelect(ref: RefLabel): void;
+  onKeyDown(event: ReactKeyboardEvent<HTMLButtonElement>, ref: RefLabel): void;
+  onContextMenu(ref: RefLabel, x: number, y: number): void;
+}) {
+  return nodes.map((node) => {
+    if (node.type === 'directory') {
+      const folderKey = `${folderKeyPrefix}:${node.id}`;
+      const collapsed = !forceExpanded && collapsedFolders.has(folderKey);
+      return (
+        <div
+          className="ref-tree-directory"
+          role="group"
+          aria-label={
+            group.kind === 'remote' && depth === 0
+              ? `Remote ${node.name}`
+              : `${group.label} folder ${node.path}`
+          }
+          key={node.id}
+        >
+          <button
+            type="button"
+            className="ref-folder-row"
+            style={{ paddingLeft: 25 + depth * 14 }}
+            aria-expanded={!collapsed}
+            aria-label={
+              forceExpanded
+                ? `${group.label} folder ${node.path} (expanded while filtering)`
+                : `${collapsed ? 'Expand' : 'Collapse'} ${group.label} folder ${node.path}`
+            }
+            disabled={forceExpanded}
+            onClick={() => onToggleFolder(folderKey)}
+          >
+            <span className="ref-folder-chevron" aria-hidden="true">
+              {collapsed ? '›' : '⌄'}
+            </span>
+            <span className="ref-folder-icon" aria-hidden="true" />
+            <span className="ref-name">{node.name}</span>
+          </button>
+          {!collapsed ? (
+            <RefTreeNodes
+              nodes={node.children}
+              depth={depth + 1}
+              group={group}
+              folderKeyPrefix={folderKeyPrefix}
+              collapsedFolders={collapsedFolders}
+              forceExpanded={forceExpanded}
+              onToggleFolder={onToggleFolder}
+              onSelect={onSelect}
+              onKeyDown={onKeyDown}
+              onContextMenu={onContextMenu}
+            />
+          ) : null}
+        </div>
+      );
+    }
+
+    const ref = node.ref;
+    return (
+      <button
+        type="button"
+        className={`ref-item${ref.isCurrent ? ' current-ref' : ''}`}
+        style={{ paddingLeft: 25 + depth * 14 }}
+        key={ref.fullName}
+        title={ref.fullName}
+        data-ref-item="true"
+        onClick={() => onSelect(ref)}
+        onKeyDown={(event) => onKeyDown(event, ref)}
+        onContextMenu={(event) => {
+          event.preventDefault();
+          onContextMenu(ref, event.clientX, event.clientY);
+        }}
+      >
+        <span className="ref-folder-chevron" aria-hidden="true" />
+        <span className="ref-icon" aria-hidden="true">
+          {ref.kind === 'tag' ? '◆' : '⌁'}
+        </span>
+        <span className="ref-name">{node.name}</span>
+        {ref.upstream ? <span className="upstream">{ref.upstream}</span> : null}
+        {ref.ahead || ref.behind ? (
+          <span className="tracking">
+            {ref.ahead ? `↑${String(ref.ahead)}` : ''}
+            {ref.behind ? ` ↓${String(ref.behind)}` : ''}
+          </span>
+        ) : null}
+      </button>
+    );
+  });
+}
+
 export function App() {
   const vscode = useMemo(() => getVsCodeApi(), []);
   const [state, setState] = useState<WorkbenchState>(initialState);
@@ -564,6 +673,7 @@ export function App() {
     'idle' | 'copying' | 'copied'
   >('idle');
   const [collapsedRefGroups, setCollapsedRefGroups] = useState<Set<string>>(new Set());
+  const [collapsedRefFolders, setCollapsedRefFolders] = useState<Set<string>>(new Set());
   const [responsiveCollapse, setResponsiveCollapse] = useState(() => ({
     files: window.matchMedia?.('(max-width: 900px)').matches ?? false,
     refs: window.matchMedia?.('(max-width: 680px)').matches ?? false,
@@ -609,6 +719,7 @@ export function App() {
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
+  const refSearchActive = Boolean(refSearch.trim());
   const visibleRefs = useMemo(() => {
     const query = refSearch.trim().toLocaleLowerCase();
     if (!query) return state.refs;
@@ -1453,6 +1564,15 @@ export function App() {
     });
   };
 
+  const toggleRefFolder = (folder: string): void => {
+    setCollapsedRefFolders((current) => {
+      const next = new Set(current);
+      if (next.has(folder)) next.delete(folder);
+      else next.add(folder);
+      return next;
+    });
+  };
+
   const handleRefKeyDown = (
     event: ReactKeyboardEvent<HTMLButtonElement>,
     ref: RefLabel,
@@ -2279,13 +2399,18 @@ export function App() {
               <button
                 type="button"
                 className="ref-group-heading"
-                aria-expanded={!collapsedRefGroups.has('head')}
+                aria-expanded={refSearchActive || !collapsedRefGroups.has('head')}
+                disabled={refSearchActive}
                 onClick={() => toggleRefGroup('head')}
               >
-                <span aria-hidden="true">{collapsedRefGroups.has('head') ? '›' : '⌄'}</span>
+                <span aria-hidden="true">
+                  {!refSearchActive && collapsedRefGroups.has('head') ? '›' : '⌄'}
+                </span>
                 <span>HEAD</span>
               </button>
-              {selectedRepository?.head && headMatchesRefSearch && !collapsedRefGroups.has('head') ? (
+              {selectedRepository?.head &&
+              headMatchesRefSearch &&
+              (refSearchActive || !collapsedRefGroups.has('head')) ? (
                 <button
                   type="button"
                   className="ref-item current-ref"
@@ -2324,76 +2449,44 @@ export function App() {
             </section>
             {refGroups.map((group) => {
               const refs = visibleRefs.filter((ref) => ref.kind === group.kind);
-              const collapsed = collapsedRefGroups.has(group.kind);
-              const remoteGroupName = (ref: RefLabel): string => ref.remote ?? 'Unresolved';
-              const remoteGroups =
-                group.kind === 'remote'
-                  ? [...new Set(refs.map(remoteGroupName))]
-                  : [];
-              const renderRef = (ref: RefLabel) => (
-                <button
-                  type="button"
-                  className={`ref-item${ref.isCurrent ? ' current-ref' : ''}`}
-                  key={ref.fullName}
-                  title={ref.fullName}
-                  data-ref-item="true"
-                  onClick={() => selectRef(ref)}
-                  onKeyDown={(event) => handleRefKeyDown(event, ref)}
-                  onContextMenu={(event) => {
-                    event.preventDefault();
-                    if (!state.selectedRepositoryId) return;
-                    setContextMenu({
-                      kind: 'ref',
-                      repositoryId: state.selectedRepositoryId,
-                      ref,
-                      x: event.clientX,
-                      y: event.clientY,
-                    });
-                  }}
-                >
-                  <span className="ref-icon" aria-hidden="true">
-                    {ref.kind === 'tag' ? '◆' : '⌁'}
-                  </span>
-                  <span className="ref-name">
-                    {ref.kind === 'remote' && ref.remote
-                      ? ref.shortName.slice(ref.remote.length + 1)
-                      : ref.shortName}
-                  </span>
-                  {ref.upstream ? <span className="upstream">{ref.upstream}</span> : null}
-                  {ref.ahead || ref.behind ? (
-                    <span className="tracking">
-                      {ref.ahead ? `↑${String(ref.ahead)}` : ''}
-                      {ref.behind ? ` ↓${String(ref.behind)}` : ''}
-                    </span>
-                  ) : null}
-                </button>
-              );
+              const collapsed = !refSearchActive && collapsedRefGroups.has(group.kind);
+              const tree = buildRefTree(refs);
               return (
                 <section className="ref-group" key={group.kind}>
                   <button
                     type="button"
                     className="ref-group-heading"
                     aria-expanded={!collapsed}
+                    disabled={refSearchActive}
                     onClick={() => toggleRefGroup(group.kind)}
                   >
                     <span aria-hidden="true">{collapsed ? '›' : '⌄'}</span>
                     <span>{group.label}</span>
                     <span className="ref-count">{refs.length}</span>
                   </button>
-                  {!collapsed && group.kind === 'remote'
-                    ? remoteGroups.map((remote) => (
-                        <div
-                          className="remote-ref-group"
-                          role="group"
-                          aria-label={`Remote ${remote}`}
-                          key={remote}
-                        >
-                          <div className="remote-ref-heading">{remote}</div>
-                          {refs.filter((ref) => remoteGroupName(ref) === remote).map(renderRef)}
-                        </div>
-                      ))
-                    : null}
-                  {!collapsed && group.kind !== 'remote' ? refs.map(renderRef) : null}
+                  {!collapsed ? (
+                    <RefTreeNodes
+                      nodes={tree}
+                      depth={0}
+                      group={group}
+                      folderKeyPrefix={`${state.selectedRepositoryId ?? ''}:${group.kind}`}
+                      collapsedFolders={collapsedRefFolders}
+                      forceExpanded={refSearchActive}
+                      onToggleFolder={toggleRefFolder}
+                      onSelect={selectRef}
+                      onKeyDown={handleRefKeyDown}
+                      onContextMenu={(ref, x, y) => {
+                        if (!state.selectedRepositoryId) return;
+                        setContextMenu({
+                          kind: 'ref',
+                          repositoryId: state.selectedRepositoryId,
+                          ref,
+                          x,
+                          y,
+                        });
+                      }}
+                    />
+                  ) : null}
                 </section>
               );
             })}

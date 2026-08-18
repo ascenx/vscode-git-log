@@ -1465,15 +1465,160 @@ describe('WorkbenchApp', () => {
     postedMessages.length = 0;
 
     const search = screen.getByRole('searchbox', { name: 'Filter branches' });
+    const localHeading = screen.getByText('Local').closest('button');
+    expect(localHeading).not.toBeNull();
+    fireEvent.click(localHeading as HTMLButtonElement);
+    expect(screen.queryByTitle('refs/heads/feature/network-switch')).not.toBeInTheDocument();
     fireEvent.change(search, { target: { value: 'network' } });
 
     expect(screen.queryByTitle('refs/heads/main')).not.toBeInTheDocument();
     expect(screen.getByTitle('refs/heads/feature/network-switch')).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Local folder feature (expanded while filtering)' }),
+    ).toBeDisabled();
     expect(postedMessages).toEqual([]);
 
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(search).toHaveValue('');
+    expect(screen.queryByTitle('refs/heads/main')).not.toBeInTheDocument();
+    fireEvent.click(localHeading as HTMLButtonElement);
     expect(screen.getByTitle('refs/heads/main')).toBeInTheDocument();
+  });
+
+  it('groups slash-delimited references into collapsible folder nodes', () => {
+    render(<App />);
+    const head = 'a'.repeat(40);
+    const refs = [
+      {
+        fullName: 'refs/heads/feature/network-switch',
+        shortName: 'feature/network-switch',
+        kind: 'local' as const,
+        target: 'b'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+      {
+        fullName: 'refs/heads/feature/third-login',
+        shortName: 'feature/third-login',
+        kind: 'local' as const,
+        target: 'c'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+      {
+        fullName: 'refs/remotes/origin/feature/perp/kline',
+        shortName: 'origin/feature/perp/kline',
+        kind: 'remote' as const,
+        remote: 'origin',
+        target: 'd'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+      {
+        fullName: 'refs/remotes/origin/feature/v3.4.5/jony',
+        shortName: 'origin/feature/v3.4.5/jony',
+        kind: 'remote' as const,
+        remote: 'origin',
+        target: 'e'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+      {
+        fullName: 'refs/remotes/team/origin/feature',
+        shortName: 'team/origin/feature',
+        kind: 'remote' as const,
+        remote: 'team/origin',
+        target: 'f'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+      {
+        fullName: 'refs/remotes/team/origin/other',
+        shortName: 'team/origin/other',
+        kind: 'remote' as const,
+        remote: 'team',
+        target: '1'.repeat(40),
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-ref-folders',
+            repositories: [
+              {
+                id: 'repo-ref-folders',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'main',
+                head,
+              },
+            ],
+            selectedRepositoryId: 'repo-ref-folders',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-ref-folders',
+            repositoryId: 'repo-ref-folders',
+            refs,
+            commits: [],
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    const localFeature = screen.getByRole('button', {
+      name: 'Collapse Local folder feature',
+    });
+    expect(localFeature).toHaveAttribute('aria-expanded', 'true');
+    expect(screen.getByTitle('refs/heads/feature/network-switch')).toHaveTextContent(
+      'network-switch',
+    );
+    expect(screen.getByRole('button', { name: 'Collapse Remote folder origin' })).toBeInTheDocument();
+    expect(
+      screen.getByRole('button', { name: 'Collapse Remote folder origin/feature/perp' }),
+    ).toBeInTheDocument();
+    expect(screen.getByTitle('refs/remotes/origin/feature/perp/kline')).toHaveTextContent('kline');
+    const slashRemote = screen.getByRole('group', { name: 'Remote team/origin' });
+    expect(within(slashRemote).getByTitle('refs/remotes/team/origin/feature')).toBeInTheDocument();
+    expect(
+      screen.queryByRole('button', { name: 'Collapse Remote folder team/origin/team' }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getAllByRole('button', { name: 'Collapse Remote folder team/origin' }),
+    ).toHaveLength(2);
+
+    fireEvent.click(localFeature);
+    expect(screen.queryByTitle('refs/heads/feature/network-switch')).not.toBeInTheDocument();
+    expect(screen.queryByTitle('refs/heads/feature/third-login')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Expand Local folder feature' }));
+    expect(screen.getByTitle('refs/heads/feature/network-switch')).toBeInTheDocument();
   });
 
   it('does not offer current-branch reset actions while HEAD is detached', () => {
