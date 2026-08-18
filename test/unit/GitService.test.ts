@@ -267,8 +267,8 @@ describe('GitService', () => {
 
   it('leaves overlapping remote tracking namespaces unowned', async () => {
     const repository = await createHistoryFixture();
-    await git(repository, 'remote', 'add', 'team', '.');
-    await git(repository, 'remote', 'add', 'team/origin', '.');
+    await git(repository, 'config', 'remote.team.url', '.');
+    await git(repository, 'config', 'remote.team/origin.url', '.');
     await git(
       repository,
       'update-ref',

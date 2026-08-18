@@ -55,6 +55,8 @@ async function createFixtureRepository(prefix = 'git-operation-'): Promise<{ pat
   const path = await mkdtemp(join(tmpdir(), prefix));
   temporaryDirectories.push(path);
   await git(path, 'init', '-b', 'main');
+  await git(path, 'config', 'user.name', 'Operation Test');
+  await git(path, 'config', 'user.email', 'operation@example.com');
   await writeFile(join(path, 'base.txt'), 'base\n');
   await git(path, 'add', 'base.txt');
   await git(path, 'commit', '-m', 'base');

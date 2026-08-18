@@ -115,4 +115,21 @@ describe('line history parser', () => {
 
     expect(entries.map((entry) => entry.hash)).toEqual([changedHash]);
   });
+
+  it('decodes Linux quoted Unicode paths with a trailing patch-header tab', async () => {
+    const { parseLineHistory } = await import('../../src/git/parsers/parseLineHistory');
+    const hash = '1'.repeat(40);
+    const quotedPath = String.raw`-\344\270\255\346\226\207 \360\237\230\200.txt`;
+    const output = Buffer.from(
+      `\x1e${hash}\x00\x00Alice\x00alice@example.com\x001\x002\x00unicode path\x00\n\n` +
+        `diff --git "a/${quotedPath}" "b/${quotedPath}"\n` +
+        `--- "a/${quotedPath}"\t\n` +
+        `+++ "b/${quotedPath}"\t\n` +
+        '@@ -1 +1 @@\n' +
+        '-old\n' +
+        '+new\n',
+    );
+
+    expect(parseLineHistory(output, [], '-中文 😀.txt')[0]?.path).toBe('-中文 😀.txt');
+  });
 });

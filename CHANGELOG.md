@@ -19,6 +19,10 @@ All notable changes to Git Log are documented in this file.
 - Commit Log text is no longer natively selectable, preventing browser text highlighting from overlapping multi-row commit selection.
 - Error notices remain visible for five seconds before being dismissed automatically.
 
+### Fixed
+
+- Fixed line-history path parsing for quoted Unicode and emoji filenames emitted by Git on Linux.
+
 ### Safety
 
 - Drop and Squash require a clean worktree and destructive confirmation.

@@ -38,7 +38,7 @@ function decodeQuotedGitPath(value: string): string {
 
 function patchPath(line: string, prefix: '--- ' | '+++ '): string | undefined {
   if (!line.startsWith(prefix)) return undefined;
-  const raw = decodeQuotedGitPath(line.slice(prefix.length));
+  const raw = decodeQuotedGitPath(line.slice(prefix.length).replace(/\t.*$/u, ''));
   if (raw === '/dev/null') return undefined;
   return raw.startsWith('a/') || raw.startsWith('b/') ? raw.slice(2) : raw;
 }
