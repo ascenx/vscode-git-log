@@ -807,12 +807,25 @@ select:focus-visible,
   gap: 6px;
 }
 
-.operation-dialog input {
+.operation-dialog input,
+.operation-dialog textarea {
   height: 28px;
   padding: 0 7px;
   border: 1px solid var(--vscode-input-border, transparent);
   background: var(--vscode-input-background);
   color: var(--vscode-input-foreground);
+}
+
+.operation-dialog textarea {
+  min-height: 240px;
+  padding: 7px;
+  resize: vertical;
+  font-family: var(--vscode-editor-font-family);
+  line-height: 1.4;
+}
+
+.operation-dialog.squash-dialog {
+  width: min(680px, calc(100vw - 32px));
 }
 
 .operation-dialog-actions {

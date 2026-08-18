@@ -293,6 +293,26 @@ export class GitService {
     return attachRefs(parseCommitDetails(result.stdout), refs);
   }
 
+  async getCommitMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<string> {
+    if (!COMMIT_HASH_PATTERN.test(hash)) {
+      throw new Error(`Invalid commit hash: ${hash}`);
+    }
+    const result = await this.runner.run(
+      ['show', '--no-patch', '--format=%B', hash, '--'],
+      {
+        cwd,
+        ...(signal ? { signal } : {}),
+        timeoutMs: 30_000,
+        maxStdoutBytes: 400_004,
+      },
+    );
+    const message = result.stdout.toString('utf8').replace(/\r?\n$/u, '');
+    if (message.length > 100_000) {
+      throw new Error('A selected commit message exceeds the 100,000 character limit.');
+    }
+    return message;
+  }
+
   async getChangedFiles(
     cwd: string,
     hash: string,

@@ -47,6 +47,67 @@ async function createRepository(): Promise<string> {
 }
 
 describe('WorkbenchController', () => {
+  it('loads complete commit messages in the requested top-to-bottom order', async () => {
+    const repository = await createRepository();
+    await writeFile(join(repository, 'app.txt'), 'second\n');
+    await execFileAsync('git', ['add', 'app.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'second subject', '-m', 'second body'], {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Alice',
+        GIT_AUTHOR_EMAIL: 'alice@example.com',
+        GIT_COMMITTER_NAME: 'Alice',
+        GIT_COMMITTER_EMAIL: 'alice@example.com',
+      },
+    });
+    const hashes = (
+      await execFileAsync('git', ['log', '--format=%H'], { cwd: repository })
+    ).stdout.trim().split('\n');
+    const messages: ExtensionToWebviewMessage[] = [];
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-commit-messages' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+
+    await controller.handleMessage({
+      type: 'requestCommitMessages',
+      requestId: 'load-commit-messages',
+      repositoryId: initialized.selectedRepositoryId,
+      hashes,
+    });
+
+    expect(messages.at(-1)).toMatchObject({
+      type: 'commitMessagesLoaded',
+      requestId: 'load-commit-messages',
+      repositoryId: initialized.selectedRepositoryId,
+      messages: [
+        { hash: hashes[0], message: 'second subject\n\nsecond body\n' },
+        { hash: hashes[1], message: 'first commit\n' },
+      ],
+    });
+  });
+
   it('confirms a successful clipboard write back to the webview', async () => {
     const messages: ExtensionToWebviewMessage[] = [];
     const copyToClipboard = vi.fn().mockResolvedValue(undefined);

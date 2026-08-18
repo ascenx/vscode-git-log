@@ -44,6 +44,25 @@ async function createHistoryFixture(): Promise<string> {
 }
 
 describe('GitService', () => {
+  it('loads a complete commit message with a bounded Git output', async () => {
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from('subject\n\nbody\n\n'),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const service = new GitService({ run } as unknown as GitRunner);
+    const hash = 'a'.repeat(40);
+
+    await expect(service.getCommitMessage('/workspace/project', hash)).resolves.toBe(
+      'subject\n\nbody\n',
+    );
+    expect(run).toHaveBeenCalledWith(
+      ['show', '--no-patch', '--format=%B', hash, '--'],
+      expect.objectContaining({ maxStdoutBytes: 400_004 }),
+    );
+  });
+
   it('loads refs, paged commits, and full details from a real repository', async () => {
     const modulePath = '../../src/git/GitService';
     const serviceModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

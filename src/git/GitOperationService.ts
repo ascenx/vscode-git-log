@@ -119,6 +119,9 @@ export function buildOperationArguments(
         '--',
         validateToken(operation.name, 'branch name'),
       ];
+    case 'dropCommits':
+    case 'squashCommits':
+      throw new Error(`${operation.kind} requires a validated history rewrite plan.`);
   }
 }
 
@@ -170,7 +173,28 @@ export function getOperationConfirmation(
       destructive: true,
     };
   }
+  if (operation.kind === 'dropCommits' || operation.kind === 'squashCommits') {
+    const count = operation.hashes.length;
+    return {
+      title: operation.kind === 'dropCommits' ? `Drop ${String(count)} commits?` : `Squash ${String(count)} commits?`,
+      detail:
+        operation.kind === 'dropCommits'
+          ? `Repository “${repository.displayName}” will remove ${String(count)} commits from the current branch and rewrite newer commits.`
+          : `Repository “${repository.displayName}” will combine ${String(count)} commits and rewrite newer commits.`,
+      confirmLabel: operation.kind === 'dropCommits' ? 'Drop Commits' : 'Squash Commits',
+      destructive: true,
+    };
+  }
   return undefined;
+}
+
+interface CommitRangeRewritePlan {
+  cwd: string;
+  branch: string;
+  expectedHead: string;
+  newest: string;
+  oldest: string;
+  baseParent: string;
 }
 
 export class GitOperationService {
@@ -322,6 +346,10 @@ export class GitOperationService {
         if (operation.kind === 'deleteRemoteBranch') {
           await this.validateRemoteBranchDeletion(freshRepository, operation.remote, operation.branch);
         }
+        let rewritePlan: CommitRangeRewritePlan | undefined;
+        if (operation.kind === 'dropCommits' || operation.kind === 'squashCommits') {
+          rewritePlan = await this.planCommitRangeRewrite(freshRepository, operation.hashes);
+        }
         let preparedOperation = operation;
         let forceSourceHash: string | undefined;
         if (operation.kind === 'push' && operation.forceWithLease) {
@@ -344,10 +372,40 @@ export class GitOperationService {
           }
           if (!(await options.confirm(confirmation))) return { message: '', cancelled: true };
         }
-        await this.runner.run(buildOperationArguments(preparedOperation, forceSourceHash), {
-          cwd: fileURLToPath(freshRepository.rootUri),
-          timeoutMs: 10 * 60_000,
-        });
+        if (rewritePlan) {
+          if (operation.kind !== 'dropCommits' && operation.kind !== 'squashCommits') {
+            throw new Error('Invalid commit history rewrite operation.');
+          }
+          await this.assertRewritePlanStillCurrent(rewritePlan);
+          const revalidatedPlan = await this.planCommitRangeRewrite(
+            freshRepository,
+            operation.hashes,
+          );
+          if (
+            revalidatedPlan.branch !== rewritePlan.branch ||
+            revalidatedPlan.expectedHead !== rewritePlan.expectedHead ||
+            revalidatedPlan.baseParent !== rewritePlan.baseParent
+          ) {
+            throw new Error(
+              'The current branch or HEAD changed during confirmation; select the commits again.',
+            );
+          }
+          rewritePlan = revalidatedPlan;
+        }
+        if (rewritePlan && preparedOperation.kind === 'dropCommits') {
+          await this.rebaseCommitRange(rewritePlan, rewritePlan.baseParent);
+        } else if (rewritePlan && preparedOperation.kind === 'squashCommits') {
+          const squashedHash = await this.createSquashedCommit(
+            rewritePlan,
+            preparedOperation.message,
+          );
+          await this.rebaseCommitRange(rewritePlan, squashedHash);
+        } else {
+          await this.runner.run(buildOperationArguments(preparedOperation, forceSourceHash), {
+            cwd: fileURLToPath(freshRepository.rootUri),
+            timeoutMs: 10 * 60_000,
+          });
+        }
         return { message: `${operation.kind} completed.` };
       });
     const tail = execution.then(
@@ -364,6 +422,144 @@ export class GitOperationService {
   private getQueueKey(repository: RepositorySummary): string {
     const path = normalize(fileURLToPath(repository.commonGitDirUri ?? repository.gitDirUri));
     return process.platform === 'win32' ? path.toLowerCase() : path;
+  }
+
+  private async planCommitRangeRewrite(
+    repository: RepositorySummary,
+    requestedHashes: readonly string[],
+  ): Promise<CommitRangeRewritePlan> {
+    const cwd = fileURLToPath(repository.rootUri);
+    const branchResult = await this.runner.run(['branch', '--show-current'], {
+      cwd,
+      timeoutMs: 30_000,
+    });
+    const branch = branchResult.stdout.toString('utf8').trim();
+    if (!branch) throw new Error('Commit history rewriting is unavailable while HEAD is detached.');
+    const hashes = requestedHashes.map(validateHash);
+    if (hashes.length < 2 || hashes.length > 100 || new Set(hashes).size !== hashes.length) {
+      throw new Error('Select between 2 and 100 unique commits.');
+    }
+    const newest = hashes[0];
+    const oldest = hashes.at(-1);
+    if (!newest || !oldest) throw new Error('Select between 2 and 100 unique commits.');
+    const status = await this.runner.run(['status', '--porcelain=v1', '-z'], {
+      cwd,
+      timeoutMs: 30_000,
+    });
+    if (status.stdout.length > 0) {
+      throw new Error('Drop and squash require a clean worktree. Commit or stash changes first.');
+    }
+    const historyResult = await this.runner.run(['rev-list', '--first-parent', '--parents', 'HEAD'], {
+      cwd,
+      timeoutMs: 30_000,
+    });
+    const historyLines = historyResult.stdout
+      .toString('utf8')
+      .trim()
+      .split(/\r?\n/u)
+      .filter(Boolean)
+      .map((line) => line.split(/\s+/u));
+    const history = historyLines.map(([hash]) => hash).filter((hash): hash is string => Boolean(hash));
+    const expectedHead = history[0];
+    if (!expectedHead) throw new Error('The current branch has no commits to rewrite.');
+    const newestIndex = history.indexOf(newest);
+    if (
+      newestIndex < 0 ||
+      hashes.some((hash, index) => history[newestIndex + index] !== hash)
+    ) {
+      throw new Error('Selected commits must be contiguous on the current branch first-parent history.');
+    }
+    const oldestIndex = newestIndex + hashes.length - 1;
+    if (oldestIndex >= history.length - 1) {
+      throw new Error('The root commit cannot be dropped or squashed.');
+    }
+    const baseParent = history[oldestIndex + 1];
+    if (!baseParent) throw new Error('The root commit cannot be dropped or squashed.');
+    if (historyLines.slice(0, oldestIndex + 1).some((line) => line.length !== 2)) {
+      throw new Error('Commit history rewriting is unavailable across merge commits.');
+    }
+    return {
+      cwd,
+      branch: validateToken(branch, 'branch name'),
+      expectedHead,
+      newest,
+      oldest,
+      baseParent,
+    };
+  }
+
+  private async assertRewritePlanStillCurrent(plan: CommitRangeRewritePlan): Promise<void> {
+    const [branchResult, headResult, statusResult] = await Promise.all([
+      this.runner.run(['branch', '--show-current'], { cwd: plan.cwd, timeoutMs: 30_000 }),
+      this.runner.run(['rev-parse', '--verify', 'HEAD'], { cwd: plan.cwd, timeoutMs: 30_000 }),
+      this.runner.run(['status', '--porcelain=v1', '-z'], {
+        cwd: plan.cwd,
+        timeoutMs: 30_000,
+      }),
+    ]);
+    const branch = branchResult.stdout.toString('utf8').trim();
+    const head = headResult.stdout.toString('utf8').trim();
+    if (branch !== plan.branch || head !== plan.expectedHead) {
+      throw new Error('The current branch or HEAD changed during confirmation; select the commits again.');
+    }
+    if (statusResult.stdout.length > 0) {
+      throw new Error('The worktree changed during confirmation; commit or stash changes first.');
+    }
+  }
+
+  private async createSquashedCommit(
+    plan: CommitRangeRewritePlan,
+    message: string,
+  ): Promise<string> {
+    if (!message.trim() || message.length > 100_000 || message.includes('\0')) {
+      throw new Error('The squash commit message is invalid.');
+    }
+    const treeResult = await this.runner.run(['rev-parse', `${plan.newest}^{tree}`], {
+      cwd: plan.cwd,
+      timeoutMs: 30_000,
+    });
+    const authorResult = await this.runner.run(
+      ['show', '-s', '--format=%an%x00%ae%x00%aI', plan.oldest, '--'],
+      { cwd: plan.cwd, timeoutMs: 30_000 },
+    );
+    const [authorName, authorEmail, authorDate] = authorResult.stdout
+      .toString('utf8')
+      .replace(/\r?\n$/u, '')
+      .split('\0');
+    const commitResult = await this.runner.run(
+      ['commit-tree', treeResult.stdout.toString('utf8').trim(), '-p', plan.baseParent],
+      {
+        cwd: plan.cwd,
+        timeoutMs: 30_000,
+        input: message.endsWith('\n') ? message : `${message}\n`,
+        env: {
+          GIT_AUTHOR_NAME: authorName,
+          GIT_AUTHOR_EMAIL: authorEmail,
+          GIT_AUTHOR_DATE: authorDate,
+        },
+      },
+    );
+    return validateHash(commitResult.stdout.toString('utf8').trim());
+  }
+
+  private async rebaseCommitRange(
+    plan: CommitRangeRewritePlan,
+    newBase: string,
+  ): Promise<void> {
+    await this.assertRewritePlanStillCurrent(plan);
+    await this.runner.run(
+      [
+        '-c',
+        'rebase.updateRefs=false',
+        '-c',
+        'rebase.autoStash=false',
+        'rebase',
+        '--onto',
+        validateHash(newBase),
+        plan.newest,
+      ],
+      { cwd: plan.cwd, timeoutMs: 10 * 60_000 },
+    );
   }
 
   private async validateRemoteBranchDeletion(

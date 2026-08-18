@@ -70,7 +70,241 @@ async function createFixtureRepository(prefix = 'git-operation-'): Promise<{ pat
   };
 }
 
+async function commitFile(cwd: string, name: string, content: string, message: string): Promise<string> {
+  await writeFile(join(cwd, name), content);
+  await git(cwd, 'add', name);
+  await git(cwd, 'commit', '-m', message);
+  return git(cwd, 'rev-parse', 'HEAD');
+}
+
 describe('GitOperationService', () => {
+  it('drops a contiguous commit range and rebases newer descendants', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-drop-range-');
+    const base = await git(fixture.path, 'rev-parse', 'HEAD');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    await commitFile(fixture.path, 'descendant.txt', 'descendant\n', 'keep descendant');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(
+      fixture.summary,
+      { kind: 'dropCommits', hashes: [newest, oldest] },
+      { confirm: () => Promise.resolve(true) },
+    );
+
+    expect((await git(fixture.path, 'log', '--format=%s')).split('\n')).toEqual([
+      'keep descendant',
+      'base',
+    ]);
+    expect(await git(fixture.path, 'rev-parse', 'HEAD^')).toBe(base);
+    await expect(stat(join(fixture.path, 'oldest.txt'))).rejects.toThrow();
+    await expect(stat(join(fixture.path, 'newest.txt'))).rejects.toThrow();
+    await expect(stat(join(fixture.path, 'descendant.txt'))).resolves.toBeDefined();
+  });
+
+  it('rewrites a selected range that includes the current HEAD', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-head-range-');
+    const base = await git(fixture.path, 'rev-parse', 'HEAD');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(
+      fixture.summary,
+      { kind: 'dropCommits', hashes: [newest, oldest] },
+      { confirm: () => Promise.resolve(true) },
+    );
+
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).toBe(base);
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('main');
+  });
+
+  it('does not update other branches when rebase.updateRefs is enabled', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-no-update-refs-');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    const descendant = await commitFile(
+      fixture.path,
+      'descendant.txt',
+      'descendant\n',
+      'keep descendant',
+    );
+    await git(fixture.path, 'branch', 'unrelated', descendant);
+    await git(fixture.path, 'config', 'rebase.updateRefs', 'true');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(
+      fixture.summary,
+      { kind: 'dropCommits', hashes: [newest, oldest] },
+      { confirm: () => Promise.resolve(true) },
+    );
+
+    expect(await git(fixture.path, 'rev-parse', 'unrelated')).toBe(descendant);
+    expect(await git(fixture.path, 'rev-parse', 'main')).not.toBe(descendant);
+  });
+
+  it('rejects a rewrite when the current branch changes during confirmation', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-stale-plan-');
+    await git(fixture.path, 'branch', 'other');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await expect(
+      service.run(
+        fixture.summary,
+        { kind: 'dropCommits', hashes: [newest, oldest] },
+        {
+          confirm: async () => {
+            await git(fixture.path, 'checkout', 'other');
+            return true;
+          },
+        },
+      ),
+    ).rejects.toThrow('changed during confirmation');
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('other');
+    expect(await git(fixture.path, 'rev-parse', 'main')).toBe(newest);
+  });
+
+  it('rejects a branch switch that occurs during post-confirmation revalidation', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-revalidation-race-');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    await git(fixture.path, 'branch', 'other', newest);
+    const realRunner = new RealGitRunner();
+    let historyReads = 0;
+    const runner = {
+      async run(args: readonly string[], options: GitRunOptions) {
+        const result = await realRunner.run(args, options);
+        if (args[0] === 'rev-list' && args.includes('--first-parent')) {
+          historyReads += 1;
+          if (historyReads === 2) await git(fixture.path, 'checkout', 'other');
+        }
+        return result;
+      },
+    } as GitRunner;
+    const service = new GitOperationService(runner);
+
+    await expect(
+      service.run(
+        fixture.summary,
+        { kind: 'dropCommits', hashes: [newest, oldest] },
+        { confirm: () => Promise.resolve(true) },
+      ),
+    ).rejects.toThrow('changed during confirmation');
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('other');
+    expect(await git(fixture.path, 'rev-parse', 'main')).toBe(newest);
+  });
+
+  it('squashes a contiguous commit range with the edited message and keeps newer descendants', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-squash-range-');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    await commitFile(fixture.path, 'descendant.txt', 'descendant\n', 'keep descendant');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(
+      fixture.summary,
+      {
+        kind: 'squashCommits',
+        hashes: [newest, oldest],
+        message: 'combined subject\n\ncombined body',
+      },
+      { confirm: () => Promise.resolve(true) },
+    );
+
+    expect((await git(fixture.path, 'log', '--format=%s')).split('\n')).toEqual([
+      'keep descendant',
+      'combined subject',
+      'base',
+    ]);
+    expect(await git(fixture.path, 'log', '-1', '--format=%B', 'HEAD^')).toBe(
+      'combined subject\n\ncombined body',
+    );
+    await expect(stat(join(fixture.path, 'oldest.txt'))).resolves.toBeDefined();
+    await expect(stat(join(fixture.path, 'newest.txt'))).resolves.toBeDefined();
+    await expect(stat(join(fixture.path, 'descendant.txt'))).resolves.toBeDefined();
+  });
+
+  it('rejects non-contiguous commit ranges and dirty worktrees before rewriting history', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-invalid-range-');
+    const oldest = await commitFile(fixture.path, 'oldest.txt', 'oldest\n', 'oldest selected');
+    await commitFile(fixture.path, 'middle.txt', 'middle\n', 'unselected middle');
+    const newest = await commitFile(fixture.path, 'newest.txt', 'newest\n', 'newest selected');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await expect(
+      service.run(
+        fixture.summary,
+        { kind: 'dropCommits', hashes: [newest, oldest] },
+        { confirm: () => Promise.resolve(true) },
+      ),
+    ).rejects.toThrow('contiguous');
+
+    const middle = await git(fixture.path, 'rev-parse', 'HEAD^');
+    await writeFile(join(fixture.path, 'dirty.txt'), 'dirty\n');
+    await expect(
+      service.run(
+        fixture.summary,
+        { kind: 'dropCommits', hashes: [newest, middle] },
+        { confirm: () => Promise.resolve(true) },
+      ),
+    ).rejects.toThrow('clean worktree');
+  });
+
+  it('rejects ranges containing the root commit or crossing a merge commit', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const rootFixture = await createFixtureRepository('git-operation-root-range-');
+    const root = await git(rootFixture.path, 'rev-parse', 'HEAD');
+    const second = await commitFile(rootFixture.path, 'second.txt', 'second\n', 'second');
+    const service = new GitOperationService(new RealGitRunner());
+    await expect(
+      service.run(
+        rootFixture.summary,
+        { kind: 'dropCommits', hashes: [second, root] },
+        { confirm: () => Promise.resolve(true) },
+      ),
+    ).rejects.toThrow('root commit');
+
+    const mergeFixture = await createFixtureRepository('git-operation-merge-range-');
+    await git(mergeFixture.path, 'branch', 'side');
+    const mainCommit = await commitFile(mergeFixture.path, 'main.txt', 'main\n', 'main change');
+    await git(mergeFixture.path, 'checkout', 'side');
+    await commitFile(mergeFixture.path, 'side.txt', 'side\n', 'side change');
+    await git(mergeFixture.path, 'checkout', 'main');
+    await git(mergeFixture.path, 'merge', '--no-ff', '--no-edit', 'side');
+    const mergeCommit = await git(mergeFixture.path, 'rev-parse', 'HEAD');
+    await expect(
+      service.run(
+        mergeFixture.summary,
+        { kind: 'dropCommits', hashes: [mergeCommit, mainCommit] },
+        { confirm: () => Promise.resolve(true) },
+      ),
+    ).rejects.toThrow('merge commits');
+  });
+
+  it('requires destructive confirmation for dropping or squashing commits', () => {
+    const hashes = ['b'.repeat(40), 'a'.repeat(40)];
+    expect(getOperationConfirmation(repository, { kind: 'dropCommits', hashes })).toMatchObject({
+      destructive: true,
+      confirmLabel: 'Drop Commits',
+    });
+    expect(
+      getOperationConfirmation(repository, {
+        kind: 'squashCommits',
+        hashes,
+        message: 'combined',
+      }),
+    ).toMatchObject({ destructive: true, confirmLabel: 'Squash Commits' });
+  });
+
   it('maps supported operations to shell-free Git argument arrays', async () => {
     const modulePath = '../../src/git/GitOperationService';
     const operationModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

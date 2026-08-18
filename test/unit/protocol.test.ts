@@ -1,6 +1,36 @@
 import { describe, expect, it } from 'vitest';
 
 describe('parseWebviewMessage', () => {
+  it('validates bounded unique commit ranges and squash messages', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const hashes = ['b'.repeat(40), 'a'.repeat(40)];
+    const request = (operation: Record<string, unknown>) =>
+      parseWebviewMessage({
+        type: 'runOperation',
+        requestId: 'commit-range',
+        repositoryId: 'repository-1',
+        operation,
+      });
+
+    expect(
+      parseWebviewMessage({
+        type: 'requestCommitMessages',
+        requestId: 'commit-messages',
+        repositoryId: 'repository-1',
+        hashes,
+      }),
+    ).toBeDefined();
+    expect(request({ kind: 'dropCommits', hashes })).toBeDefined();
+    expect(request({ kind: 'squashCommits', hashes, message: 'combined' })).toBeDefined();
+    expect(request({ kind: 'dropCommits', hashes: [hashes[0], hashes[0]] })).toBeUndefined();
+    expect(request({ kind: 'dropCommits', hashes: [hashes[0]] })).toBeUndefined();
+    expect(
+      request({ kind: 'dropCommits', hashes: Array.from({ length: 101 }, (_, i) => i.toString(16).padStart(40, '0')) }),
+    ).toBeUndefined();
+    expect(request({ kind: 'squashCommits', hashes, message: '\0unsafe' })).toBeUndefined();
+    expect(request({ kind: 'squashCommits', hashes, message: 'x'.repeat(100_001) })).toBeUndefined();
+  });
+
   it('accepts known typed messages and rejects malformed payloads', async () => {
     const modulePath = '../../src/protocol/messages';
     const protocol = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

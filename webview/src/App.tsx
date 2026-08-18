@@ -203,14 +203,14 @@ function readScrollTopByRepository(value: unknown): Record<string, number> {
 interface CommitListProps {
   commits: CommitSummary[];
   graphLayout: GraphLayoutResult;
-  selectedHash: string | undefined;
+  selectedHashes: ReadonlySet<string>;
   headHash: string | undefined;
   hasMore: boolean;
   loading: boolean;
   initialScrollTop: number;
   onScrollTopChange(scrollTop: number): void;
   onHorizontalScroll(scrollLeft: number): void;
-  onSelect(commit: CommitSummary): void;
+  onSelect(commit: CommitSummary, extend: boolean): void;
   onContextMenu(commit: CommitSummary, x: number, y: number): void;
   onLoadMore(): void;
 }
@@ -218,7 +218,7 @@ interface CommitListProps {
 function CommitList({
   commits,
   graphLayout,
-  selectedHash,
+  selectedHashes,
   headHash,
   hasMore,
   loading,
@@ -304,17 +304,17 @@ function CommitList({
           const graphRow = graphLayout.rows[index];
           return (
             <div
-              className={`commit-row${selectedHash === commit.hash ? ' selected' : ''}${
+              className={`commit-row${selectedHashes.has(commit.hash) ? ' selected' : ''}${
                 headHash === commit.hash ? ' head-row' : ''
               }`}
               style={{ top: index * rowHeight }}
               role="row"
               aria-rowindex={index + 2}
-              aria-selected={selectedHash === commit.hash}
+              aria-selected={selectedHashes.has(commit.hash)}
               data-commit-hash={commit.hash}
               tabIndex={0}
               key={commit.hash}
-              onClick={() => onSelect(commit)}
+              onClick={(event) => onSelect(commit, event.shiftKey)}
               onContextMenu={(event) => {
                 event.preventDefault();
                 onContextMenu(commit, event.clientX, event.clientY);
@@ -341,11 +341,11 @@ function CommitList({
                   event.preventDefault();
                   const target = commits[targetIndex];
                   if (target) {
-                    onSelect(target);
+                    onSelect(target, event.shiftKey);
                     focusCommit(targetIndex);
                   }
                 } else if (event.key === 'Enter' || event.key === ' ') {
-                  onSelect(commit);
+                  onSelect(commit, event.shiftKey);
                 }
               }}
             >
@@ -503,16 +503,34 @@ function FileTreeNodes({
 export function App() {
   const vscode = useMemo(() => getVsCodeApi(), []);
   const [state, setState] = useState<WorkbenchState>(initialState);
+  const [selectedCommitHashes, setSelectedCommitHashes] = useState<string[]>([]);
   const [scrollTopByRepository, setScrollTopByRepository] = useState<Record<string, number>>(() =>
     readScrollTopByRepository(vscode.getState()),
   );
   const [filterPopup, setFilterPopup] = useState<'branch' | 'user' | 'date' | 'paths' | undefined>();
   const [contextMenu, setContextMenu] = useState<
-    | { kind: 'commit'; repositoryId: string; commit: CommitSummary; x: number; y: number }
+    | {
+        kind: 'commit';
+        repositoryId: string;
+        commit: CommitSummary;
+        commits: CommitSummary[];
+        x: number;
+        y: number;
+      }
     | { kind: 'ref'; repositoryId: string; ref: RefLabel; x: number; y: number }
     | { kind: 'file'; repositoryId: string; file: ChangedFile; x: number; y: number }
     | { kind: 'toolbar'; repositoryId: string; x: number; y: number }
     | { kind: 'head'; repositoryId: string; hash: string; x: number; y: number }
+    | undefined
+  >();
+  const [squashOperation, setSquashOperation] = useState<
+    | {
+        repositoryId: string;
+        hashes: string[];
+        requestId: string;
+        message: string;
+        loading: boolean;
+      }
     | undefined
   >();
   const [namedOperation, setNamedOperation] = useState<
@@ -566,6 +584,8 @@ export function App() {
     repositoryId: string;
     hash: string;
   } | undefined>(undefined);
+  const activeCommitMessagesRequest = useRef<string | undefined>(undefined);
+  const commitSelectionAnchor = useRef<string | undefined>(undefined);
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
@@ -606,6 +626,10 @@ export function App() {
       })),
     );
   }, [state.commits, state.graphContinuation, state.history]);
+  const selectedCommitHashSet = useMemo(
+    () => new Set(selectedCommitHashes),
+    [selectedCommitHashes],
+  );
   const selectedOperationInFlight = state.selectedRepositoryId
     ? state.operationRepositoryIds.has(state.selectedRepositoryId)
     : false;
@@ -733,6 +757,10 @@ export function App() {
           }
           requestScopeById.current.delete(message.requestId);
           activeSelectionRequest.current = undefined;
+          activeCommitMessagesRequest.current = undefined;
+          commitSelectionAnchor.current = undefined;
+          setSelectedCommitHashes([]);
+          setSquashOperation(undefined);
           activeOperationRequestByRepository.current.clear();
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
@@ -760,6 +788,23 @@ export function App() {
             error: undefined,
             errorRecovery: undefined,
           }));
+          break;
+        case 'commitMessagesLoaded':
+          if (activeCommitMessagesRequest.current !== message.requestId) break;
+          activeCommitMessagesRequest.current = undefined;
+          setSquashOperation((current) =>
+            current &&
+            current.requestId === message.requestId &&
+            current.repositoryId === message.repositoryId
+              ? {
+                  ...current,
+                  loading: false,
+                  message: message.messages
+                    .map((entry) => entry.message.replace(/\r?\n$/u, ''))
+                    .join('\n\n'),
+                }
+              : current,
+          );
           break;
         case 'repositoryData': {
           if (selectedRepositoryIdRef.current !== message.repositoryId) {
@@ -790,11 +835,28 @@ export function App() {
             });
           }
           if (message.selectedHash) {
+            const selectedHash = message.selectedHash;
             activeSelectionRequest.current = {
               requestId: message.requestId,
               repositoryId: message.repositoryId,
-              hash: message.selectedHash,
+              hash: selectedHash,
             };
+            setSelectedCommitHashes((current) => {
+              const selectedIndexes = current.map((hash) =>
+                message.commits.findIndex((commit) => commit.hash === hash),
+              );
+              const firstIndex = selectedIndexes[0] ?? -1;
+              const keepsRange =
+                current.length > 1 &&
+                selectedIndexes.every(
+                  (index, position) => index >= 0 && index === firstIndex + position,
+                );
+              if (keepsRange) {
+                return current;
+              }
+              commitSelectionAnchor.current = selectedHash;
+              return [selectedHash];
+            });
           }
           setState((current) => {
             if (current.selectedRepositoryId !== message.repositoryId) return current;
@@ -995,6 +1057,10 @@ export function App() {
               detailsHashCopyRequest.current = undefined;
               setDetailsHashCopyState('idle');
             }
+            if (activeCommitMessagesRequest.current === message.requestId) {
+              activeCommitMessagesRequest.current = undefined;
+              setSquashOperation(undefined);
+            }
             if (pendingFiltersRef.current?.requestId === message.requestId) {
               pendingFiltersRef.current = undefined;
             }
@@ -1182,6 +1248,10 @@ export function App() {
     setNamedOperation(undefined);
     setFilterPopup(undefined);
     activeSelectionRequest.current = undefined;
+    activeCommitMessagesRequest.current = undefined;
+    commitSelectionAnchor.current = undefined;
+    setSelectedCommitHashes([]);
+    setSquashOperation(undefined);
     lastWindowAnchorSignature.current = undefined;
     selectedRepositoryIdRef.current = repositoryId;
     setState((current) => ({
@@ -1208,7 +1278,7 @@ export function App() {
     send({ type: 'selectRepository', requestId: selectionRequestId, repositoryId });
   };
 
-  const selectCommit = (commit: CommitSummary): void => {
+  const selectCommit = (commit: CommitSummary, extend = false): void => {
     if (state.history) {
       const rememberedParent = historyParentChoices.current.get(commit.hash);
       if (commit.parents.length > 1 && !rememberedParent) {
@@ -1230,6 +1300,23 @@ export function App() {
       return;
     }
     if (!state.selectedRepositoryId) return;
+    if (extend && commitSelectionAnchor.current) {
+      const anchorIndex = state.commits.findIndex(
+        (candidate) => candidate.hash === commitSelectionAnchor.current,
+      );
+      const targetIndex = state.commits.findIndex((candidate) => candidate.hash === commit.hash);
+      if (anchorIndex >= 0 && targetIndex >= 0) {
+        const start = Math.min(anchorIndex, targetIndex);
+        const end = Math.max(anchorIndex, targetIndex);
+        setSelectedCommitHashes(state.commits.slice(start, end + 1).map((candidate) => candidate.hash));
+      } else {
+        commitSelectionAnchor.current = commit.hash;
+        setSelectedCommitHashes([commit.hash]);
+      }
+    } else {
+      commitSelectionAnchor.current = commit.hash;
+      setSelectedCommitHashes([commit.hash]);
+    }
     const selectionRequestId = requestId('selection');
     activeSelectionRequest.current = {
       requestId: selectionRequestId,
@@ -1260,6 +1347,8 @@ export function App() {
       selectCommit(commit);
       return;
     }
+    commitSelectionAnchor.current = hash;
+    setSelectedCommitHashes([hash]);
     setState((current) => ({
       ...current,
       selectedHash: hash,
@@ -2247,6 +2336,7 @@ export function App() {
               '--author-column-width': `${String(state.layout.authorColumnWidth ?? 130)}px`,
               '--date-column-width': `${String(state.layout.dateColumnWidth ?? 125)}px`,
               '--log-content-width': `${String(logContentWidth)}px`,
+              userSelect: 'none',
               '--log-grid-columns': `${
                 state.layout.commitColumnWidth
                   ? `${String(state.layout.commitColumnWidth)}px`
@@ -2345,7 +2435,7 @@ export function App() {
             <CommitList
               commits={state.history?.entries ?? state.commits}
               graphLayout={graphLayout}
-              selectedHash={state.selectedHash}
+              selectedHashes={selectedCommitHashSet}
               headHash={selectedRepository?.head}
               hasMore={state.history?.hasMore ?? state.hasMore}
               loading={state.loading === 'log'}
@@ -2390,10 +2480,15 @@ export function App() {
               onContextMenu={(commit, x, y) => {
                 if (state.history) return;
                 if (!state.selectedRepositoryId) return;
+                const commits = selectedCommitHashSet.has(commit.hash)
+                  ? state.commits.filter((candidate) => selectedCommitHashSet.has(candidate.hash))
+                  : [commit];
+                if (!selectedCommitHashSet.has(commit.hash)) selectCommit(commit);
                 setContextMenu({
                   kind: 'commit',
                   repositoryId: state.selectedRepositoryId,
                   commit,
+                  commits,
                   x,
                   y,
                 });
@@ -2774,6 +2869,72 @@ export function App() {
           ) : null}
           {contextMenu.kind === 'commit' ? (
             <>
+              {contextMenu.commits.length >= 2 &&
+              !selectedRepository?.isBare &&
+              !selectedRepository?.operationState ? (
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={
+                      !selectedRepository?.currentBranch ||
+                      selectedOperationInFlight ||
+                      contextMenu.commits.length > 100
+                    }
+                    title={
+                      contextMenu.commits.length > 100
+                        ? 'Select no more than 100 commits'
+                        : undefined
+                    }
+                    onClick={() =>
+                      runOperation(
+                        {
+                          kind: 'dropCommits',
+                          hashes: contextMenu.commits.map((commit) => commit.hash),
+                        },
+                        contextMenu.repositoryId,
+                      )
+                    }
+                  >
+                    Drop commits…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={
+                      !selectedRepository?.currentBranch ||
+                      selectedOperationInFlight ||
+                      contextMenu.commits.length > 100
+                    }
+                    title={
+                      contextMenu.commits.length > 100
+                        ? 'Select no more than 100 commits'
+                        : undefined
+                    }
+                    onClick={() => {
+                      const hashes = contextMenu.commits.map((commit) => commit.hash);
+                      const messageRequestId = requestId('commit-messages');
+                      activeCommitMessagesRequest.current = messageRequestId;
+                      setSquashOperation({
+                        repositoryId: contextMenu.repositoryId,
+                        hashes,
+                        requestId: messageRequestId,
+                        message: '',
+                        loading: true,
+                      });
+                      send({
+                        type: 'requestCommitMessages',
+                        requestId: messageRequestId,
+                        repositoryId: contextMenu.repositoryId,
+                        hashes,
+                      });
+                      setContextMenu(undefined);
+                    }}
+                  >
+                    Squash commits…
+                  </button>
+                </>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -3390,6 +3551,62 @@ export function App() {
               </button>
             </div>
           </div>
+        </div>
+      ) : null}
+
+      {squashOperation ? (
+        <div className="operation-dialog-backdrop">
+          <form
+            className="operation-dialog squash-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Squash Commits"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (squashOperation.loading || !squashOperation.message.trim()) return;
+              runOperation(
+                {
+                  kind: 'squashCommits',
+                  hashes: squashOperation.hashes,
+                  message: squashOperation.message,
+                },
+                squashOperation.repositoryId,
+              );
+              setSquashOperation(undefined);
+            }}
+          >
+            <label>
+              <span>Commit message</span>
+              <textarea
+                autoFocus
+                aria-label="Squash commit message"
+                disabled={squashOperation.loading}
+                value={squashOperation.message}
+                onChange={(event) =>
+                  setSquashOperation((current) =>
+                    current ? { ...current, message: event.target.value } : current,
+                  )
+                }
+              />
+            </label>
+            <div className="operation-dialog-actions">
+              <button
+                type="button"
+                onClick={() => {
+                  activeCommitMessagesRequest.current = undefined;
+                  setSquashOperation(undefined);
+                }}
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={squashOperation.loading || !squashOperation.message.trim()}
+              >
+                Squash Commits
+              </button>
+            </div>
+          </form>
         </div>
       ) : null}
 

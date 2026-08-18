@@ -195,6 +195,25 @@ export class WorkbenchController {
           await this.persistWorkbenchState();
           await this.loadSelection(message.repositoryId, message.hash, message.requestId);
           break;
+        case 'requestCommitMessages': {
+          this.requireSelectedRepository(message.repositoryId);
+          const repository = this.requireRepository(message.repositoryId);
+          const cwd = fileURLToPath(repository.rootUri);
+          const messages: Array<{ hash: string; message: string }> = [];
+          for (const hash of message.hashes) {
+            messages.push({
+              hash,
+              message: await this.options.gitService.getCommitMessage(cwd, hash),
+            });
+          }
+          await this.options.postMessage({
+            type: 'commitMessagesLoaded',
+            requestId: message.requestId,
+            repositoryId: message.repositoryId,
+            messages,
+          });
+          break;
+        }
         case 'selectParent':
           this.requireSelectedRepository(message.repositoryId);
           this.selectedCommits.set(message.repositoryId, message.hash);

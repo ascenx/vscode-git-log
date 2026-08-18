@@ -3,6 +3,7 @@ import { redactGitDiagnostic } from './classifyGitError';
 
 export interface GitRunOptions {
   cwd: string;
+  input?: string | Buffer;
   signal?: AbortSignal;
   timeoutMs?: number;
   env?: NodeJS.ProcessEnv;
@@ -78,8 +79,10 @@ export class GitRunner {
           PAGER: 'cat',
           ...options.env,
         },
-        stdio: ['ignore', 'pipe', 'pipe'],
+        stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
+
+      if (options.input !== undefined) child.stdin?.end(options.input);
 
       const stop = (): void => {
         if (!child.killed) child.kill();
@@ -100,7 +103,7 @@ export class GitRunner {
           }, options.timeoutMs)
         : undefined;
 
-      child.stdout.on('data', (chunk: Buffer | string) => {
+      child.stdout?.on('data', (chunk: Buffer | string) => {
         if (stdoutLimitExceeded) return;
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         const maximumBytes = options.maxStdoutBytes;
@@ -115,7 +118,7 @@ export class GitRunner {
         stdout.push(buffer);
         stdoutBytes += buffer.length;
       });
-      child.stderr.on('data', (chunk: Buffer | string) => {
+      child.stderr?.on('data', (chunk: Buffer | string) => {
         if (stderrLimitExceeded) return;
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         const maximumBytes = options.maxStderrBytes ?? GitRunner.DEFAULT_MAX_STDERR_BYTES;

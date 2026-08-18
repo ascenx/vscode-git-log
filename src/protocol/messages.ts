@@ -15,6 +15,8 @@ const MAX_FILTER_ITEMS = 100;
 const MAX_FILTER_ITEM_LENGTH = 4096;
 const MAX_LOG_OFFSET = 10_000_000;
 const MAX_UNIX_SECONDS = 253_402_300_799;
+const MAX_COMMIT_RANGE = 100;
+const MAX_COMMIT_MESSAGE_LENGTH = 100_000;
 
 export interface LogFilters {
   text: string;
@@ -57,6 +59,12 @@ export type WebviewToExtensionMessage =
   | { type: 'ready'; requestId: string }
   | { type: 'selectRepository'; requestId: string; repositoryId: string }
   | { type: 'selectCommit'; requestId: string; repositoryId: string; hash: string }
+  | {
+      type: 'requestCommitMessages';
+      requestId: string;
+      repositoryId: string;
+      hashes: string[];
+    }
   | {
       type: 'selectParent';
       requestId: string;
@@ -135,7 +143,9 @@ export type GitOperationRequest =
   | { kind: 'rebase'; ref: string }
   | { kind: 'reset'; hash: string; mode: 'soft' | 'mixed' | 'hard' }
   | { kind: 'renameBranch'; oldName: string; newName: string }
-  | { kind: 'deleteBranch'; name: string; force: boolean };
+  | { kind: 'deleteBranch'; name: string; force: boolean }
+  | { kind: 'dropCommits'; hashes: string[] }
+  | { kind: 'squashCommits'; hashes: string[]; message: string };
 
 export type ErrorRecoveryAction = { kind: 'forceDeleteBranch'; branch: string };
 
@@ -176,6 +186,12 @@ export type ExtensionToWebviewMessage =
       details: CommitDetails;
       files: ChangedFile[];
       selectedParent?: string;
+    }
+  | {
+      type: 'commitMessagesLoaded';
+      requestId: string;
+      repositoryId: string;
+      messages: Array<{ hash: string; message: string }>;
     }
   | {
       type: 'historyOpened';
@@ -239,6 +255,16 @@ function hasRepository(value: Record<string, unknown>): value is Record<string, 
 
 function isHash(value: unknown): value is string {
   return typeof value === 'string' && /^[0-9a-f]{4,64}$/iu.test(value);
+}
+
+function isCommitRange(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    value.length <= MAX_COMMIT_RANGE &&
+    value.every(isHash) &&
+    new Set(value).size === value.length
+  );
 }
 
 function isLayout(value: unknown): value is WorkbenchLayout {
@@ -430,6 +456,16 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
       return isGitRefName(value.oldName) && isGitRefName(value.newName);
     case 'deleteBranch':
       return isGitRefName(value.name) && typeof value.force === 'boolean';
+    case 'dropCommits':
+      return isCommitRange(value.hashes);
+    case 'squashCommits':
+      return (
+        isCommitRange(value.hashes) &&
+        typeof value.message === 'string' &&
+        value.message.trim().length > 0 &&
+        value.message.length <= MAX_COMMIT_MESSAGE_LENGTH &&
+        !value.message.includes('\0')
+      );
     default:
       return false;
   }
@@ -452,6 +488,15 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
             requestId: value.requestId,
             repositoryId: value.repositoryId,
             hash: value.hash,
+          }
+        : undefined;
+    case 'requestCommitMessages':
+      return hasRepository(value) && isCommitRange(value.hashes)
+        ? {
+            type: value.type,
+            requestId: value.requestId,
+            repositoryId: value.repositoryId,
+            hashes: value.hashes,
           }
         : undefined;
     case 'selectParent':
