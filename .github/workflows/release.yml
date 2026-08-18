@@ -64,6 +64,9 @@ jobs:
       - name: Type-check
         run: npm run typecheck
 
+      - name: Test VS Code 1.85.2 compatibility
+        run: xvfb-run -a npm run test:integration
+
       - name: Package VSIX
         run: npm run package
 

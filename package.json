@@ -8,7 +8,7 @@
   "icon": "media/git-log.png",
   "private": true,
   "engines": {
-    "vscode": "^1.105.0"
+    "vscode": "^1.85.0"
   },
   "categories": [
     "SCM Providers",
@@ -200,7 +200,7 @@
     "@types/node": "^22.18.0",
     "@types/react": "^19.2.0",
     "@types/react-dom": "^19.2.0",
-    "@types/vscode": "^1.105.0",
+    "@types/vscode": "1.85.0",
     "@vscode/test-electron": "^3.1.0",
     "@vscode/vsce": "^3.9.2",
     "esbuild": "^0.28.2",

@@ -12,6 +12,8 @@ Git Log is designed to provide a complete Git history workflow inside VS Code ra
 
 Install [Git Log — Commit Graph & History](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log) from the Visual Studio Marketplace, or search for `ascenx.git-log` in the VS Code Extensions view.
 
+Git Log supports VS Code 1.85.2 and later.
+
 You can also install it from the command line:
 
 ```bash

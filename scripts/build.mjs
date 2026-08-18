@@ -15,7 +15,7 @@ const builds = [
     outfile: 'dist/extension.js',
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node18',
     external: ['vscode'],
   },
   {
@@ -24,7 +24,7 @@ const builds = [
     outfile: 'dist/history-syntax-worker.js',
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node18',
   },
   {
     ...shared,
@@ -43,7 +43,7 @@ const builds = [
     outfile: 'dist-test/integration.js',
     platform: 'node',
     format: 'cjs',
-    target: 'node20',
+    target: 'node18',
     external: ['vscode'],
   },
 ];

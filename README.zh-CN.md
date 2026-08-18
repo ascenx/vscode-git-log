@@ -12,6 +12,8 @@ Git Log 的目标不是给 VS Code 内置 Source Control 换一个皮肤，而�
 
 前往 [Visual Studio Marketplace](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log) 安装 **Git Log — Commit Graph & History**，也可以在 VS Code 扩展视图中搜索 `ascenx.git-log`。
 
+Git Log 支持 VS Code 1.85.2 及更高版本。
+
 还可以通过命令行安装：
 
 ```bash

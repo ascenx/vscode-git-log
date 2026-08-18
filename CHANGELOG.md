@@ -14,6 +14,7 @@ All notable changes to Git Log are documented in this file.
 
 ### Changed
 
+- Lowered the minimum supported VS Code version to 1.85.2 and aligned Extension Host bundles with its Node 18 runtime.
 - Clicking or double-clicking a branch now selects and displays its commit history without checking it out; checkout is available explicitly from the Ref context menu.
 - Commit Log text is no longer natively selectable, preventing browser text highlighting from overlapping multi-row commit selection.
 - Error notices remain visible for five seconds before being dismissed automatically.

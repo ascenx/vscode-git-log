@@ -48,6 +48,35 @@ describe('extension contributions', () => {
     expect(`${packageJson.publisher}.${packageJson.name}`).toBe('ascenx.git-log');
   });
 
+  it('declares VS Code 1.85 and Node 18 as the extension compatibility baseline', async () => {
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
+      engines?: { vscode?: string };
+      devDependencies?: Record<string, string>;
+    };
+
+    expect(packageJson.engines?.vscode).toBe('^1.85.0');
+    expect(packageJson.devDependencies?.['@types/vscode']).toBe('1.85.0');
+
+    const buildSource = await readFile('scripts/build.mjs', 'utf8');
+    expect(buildSource).not.toContain("target: 'node20'");
+    expect(buildSource.match(/target: 'node18'/gu)).toHaveLength(3);
+  });
+
+  it('runs extension integration tests against VS Code 1.85.2 by default', async () => {
+    const integrationSource = await readFile('scripts/run-integration.mjs', 'utf8');
+
+    expect(integrationSource).toContain(
+      "const version = process.env.VSCODE_TEST_VERSION ?? '1.85.2';",
+    );
+    expect(integrationSource).toContain('version,');
+  });
+
+  it('verifies VS Code 1.85.2 compatibility before publishing a release', async () => {
+    const workflow = await readFile('.github/workflows/release.yml', 'utf8');
+
+    expect(workflow).toContain('xvfb-run -a npm run test:integration');
+  });
+
   it('provides a PNG icon for the extension details page', async () => {
     const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
       icon?: string;
