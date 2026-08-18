@@ -22,6 +22,7 @@ All notable changes to Git Log are documented in this file.
 ### Fixed
 
 - Fixed line-history path parsing for quoted Unicode and emoji filenames emitted by Git on Linux.
+- Editor-history commands now return their asynchronous work so callers and CI wait until the requested tab is open.
 
 ### Safety
 

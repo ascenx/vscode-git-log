@@ -3,11 +3,11 @@ export interface DisposableLike {
 }
 
 export interface ExtensionRegistrationHost {
-  registerCommand(command: string, handler: () => void): DisposableLike;
+  registerCommand(command: string, handler: () => unknown): DisposableLike;
   openWorkbench(): void;
-  showLineHistory(): void;
-  showSelectionHistory(): void;
-  showFileHistory(): void;
+  showLineHistory(): Promise<void>;
+  showSelectionHistory(): Promise<void>;
+  showFileHistory(): Promise<void>;
   compareFileWithRef(): void;
 }
 

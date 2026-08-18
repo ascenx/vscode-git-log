@@ -8,6 +8,22 @@ import { HistoryPatchSyntaxHighlighter } from '../../src/editor/HistoryPatchSynt
 import { ShikiHistoryCodeTokenizer } from '../../src/editor/ShikiHistoryCodeTokenizer';
 
 const execFileAsync = promisify(execFile);
+const TAB_WAIT_TIMEOUT_MS = 10_000;
+
+async function waitForTab(
+  predicate: (tab: vscode.Tab) => boolean,
+  message: string,
+): Promise<vscode.Tab> {
+  const deadline = Date.now() + TAB_WAIT_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const tab = vscode.window.tabGroups.all
+      .flatMap((group) => group.tabs)
+      .find(predicate);
+    if (tab) return tab;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  }
+  assert.fail(message);
+}
 
 export async function run(): Promise<void> {
   const extension = vscode.extensions.getExtension('ascenx.git-log');
@@ -120,20 +136,17 @@ export async function run(): Promise<void> {
     editor.selection = new vscode.Selection(0, 0, 0, 0);
 
     await vscode.commands.executeCommand('gitLogWorkbench.editor.showLineHistory');
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const lineHistoryTabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
-    assert.ok(
-      lineHistoryTabs.some((tab) => tab.label === 'Line History: editor-history.ts:1'),
+    await waitForTab(
+      (tab) => tab.label === 'Line History: editor-history.ts:1',
       'Line History should open in a dedicated editor tab',
     );
     editor = await vscode.window.showTextDocument(document);
     await vscode.commands.executeCommand('gitLogWorkbench.editor.showFileHistory');
-    await new Promise((resolve) => setTimeout(resolve, 500));
-    const fileHistoryTabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
-    assert.ok(
-      fileHistoryTabs.some((tab) => tab.label === 'File History: editor-history.ts'),
+    await waitForTab(
+      (tab) => tab.label === 'File History: editor-history.ts',
       'File History should open in a dedicated editor tab',
     );
+    const fileHistoryTabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
     assert.ok(
       fileHistoryTabs.some(
         (tab) =>
@@ -146,13 +159,9 @@ export async function run(): Promise<void> {
     assert.equal(document.isDirty, true, 'the fixture document should contain unsaved content');
     editor.selection = new vscode.Selection(0, 0, 2, 0);
     await vscode.commands.executeCommand('gitLogWorkbench.editor.showSelectionHistory');
-    await new Promise((resolve) => setTimeout(resolve, 500));
     assert.equal(document.isDirty, true, 'line history must not save the active document');
-    const selectionHistoryTabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
-    assert.ok(
-      selectionHistoryTabs.some(
-        (tab) => tab.label === 'Selection History: editor-history.ts:1–2',
-      ),
+    await waitForTab(
+      (tab) => tab.label === 'Selection History: editor-history.ts:1–2',
       'Selection History should open in a dedicated editor tab',
     );
 
@@ -160,8 +169,14 @@ export async function run(): Promise<void> {
     await vscode.commands.executeCommand('gitLogWorkbench.editor.compareFileWithRef');
     await new Promise((resolve) => setTimeout(resolve, 250));
     await vscode.commands.executeCommand('workbench.action.acceptSelectedQuickOpenItem');
-    await new Promise((resolve) => setTimeout(resolve, 500));
     assert.equal(document.isDirty, true, 'Branch/Tag comparison must not save the active document');
+
+    await waitForTab(
+      (tab) =>
+        tab.label.startsWith('Compare: editor-history.ts') &&
+        tab.input instanceof vscode.TabInputTextDiff,
+      'the Branch/Tag comparison command should open a native VS Code diff tab',
+    );
 
     const editorTabs = vscode.window.tabGroups.all.flatMap((group) => group.tabs);
     assert.ok(

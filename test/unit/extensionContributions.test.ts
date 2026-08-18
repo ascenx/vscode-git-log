@@ -204,6 +204,17 @@ describe('extension contributions', () => {
     expect(source).not.toContain('compareFileWithRef: () => {},');
   });
 
+  it('returns editor-history command promises so VS Code waits for their tabs to open', async () => {
+    const source = await readFile('src/extension.ts', 'utf8');
+
+    expect(source).toContain('showLineHistory: () => editorHistoryCommands.showLineHistory(),');
+    expect(source).toContain(
+      'showSelectionHistory: () => editorHistoryCommands.showSelectionHistory(),',
+    );
+    expect(source).toContain('showFileHistory: () => editorHistoryCommands.showFileHistory(),');
+    expect(source).not.toContain('void editorHistoryCommands.showLineHistory()');
+  });
+
   it('builds Shiki syntax highlighting as a separate worker bundle', async () => {
     const buildSource = await readFile('scripts/build.mjs', 'utf8');
 

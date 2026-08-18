@@ -143,15 +143,9 @@ export function activate(context: vscode.ExtensionContext): void {
     openWorkbench: () => {
       void vscode.commands.executeCommand('gitLogWorkbench.log.focus');
     },
-    showLineHistory: () => {
-      void editorHistoryCommands.showLineHistory();
-    },
-    showSelectionHistory: () => {
-      void editorHistoryCommands.showSelectionHistory();
-    },
-    showFileHistory: () => {
-      void editorHistoryCommands.showFileHistory();
-    },
+    showLineHistory: () => editorHistoryCommands.showLineHistory(),
+    showSelectionHistory: () => editorHistoryCommands.showSelectionHistory(),
+    showFileHistory: () => editorHistoryCommands.showFileHistory(),
     compareFileWithRef: () => {
       void compareFileCommand.run();
     },
