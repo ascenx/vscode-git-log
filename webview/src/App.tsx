@@ -14,6 +14,7 @@ import {
 } from '../../src/graph/layoutCommitGraph';
 import {
   parseWebviewMessage,
+  type ErrorRecoveryAction,
   type ExtensionToWebviewMessage,
   type GitOperationRequest,
   type LogFilters,
@@ -95,6 +96,7 @@ interface WorkbenchState {
   filters: LogFilters;
   loading: Extract<ExtensionToWebviewMessage, { type: 'loading' }>['scope'] | undefined;
   error: string | undefined;
+  errorRecovery: { repositoryId: string; action: ErrorRecoveryAction } | undefined;
   history:
     | {
         repositoryId: string;
@@ -153,6 +155,7 @@ const initialState: WorkbenchState = {
   filters: defaultFilters,
   loading: undefined,
   error: undefined,
+  errorRecovery: undefined,
   history: undefined,
 };
 
@@ -662,6 +665,20 @@ export function App() {
   }, [state.graphContinuation, state.startLogOffset]);
 
   useEffect(() => {
+    if (!state.error) return;
+    const error = state.error;
+    const recovery = state.errorRecovery;
+    const timer = window.setTimeout(() => {
+      setState((current) =>
+        current.error === error && current.errorRecovery === recovery
+          ? { ...current, error: undefined, errorRecovery: undefined }
+          : current,
+      );
+    }, 5_000);
+    return () => window.clearTimeout(timer);
+  }, [state.error, state.errorRecovery]);
+
+  useEffect(() => {
     const repositoryId = state.selectedRepositoryId;
     if (!repositoryId || !state.windowAnchorReady) return;
     const signature = `${repositoryId}:${String(state.startLogOffset)}:${JSON.stringify(
@@ -741,6 +758,7 @@ export function App() {
             files: [],
             selectedFile: undefined,
             error: undefined,
+            errorRecovery: undefined,
           }));
           break;
         case 'repositoryData': {
@@ -812,6 +830,7 @@ export function App() {
               hasMore: message.hasMore,
               loading: undefined,
               error: undefined,
+              errorRecovery: undefined,
               ...(message.replace && !keepsSelection
                 ? {
                     selectedHash: undefined,
@@ -884,6 +903,7 @@ export function App() {
               selectedFile: undefined,
               loading: undefined,
               error: undefined,
+              errorRecovery: undefined,
             };
           });
           break;
@@ -906,6 +926,7 @@ export function App() {
             },
             loading: undefined,
             error: undefined,
+            errorRecovery: undefined,
           }));
           break;
         case 'historyClosed':
@@ -916,7 +937,9 @@ export function App() {
               ? {
                   ...current,
                   history: undefined,
-                  ...(message.reason ? { error: message.reason } : {}),
+                  ...(message.reason
+                    ? { error: message.reason, errorRecovery: undefined }
+                    : {}),
                 }
               : current,
           );
@@ -931,6 +954,7 @@ export function App() {
               ...current,
               operationRepositoryIds: new Set(current.operationRepositoryIds).add(repositoryId),
               error: undefined,
+              errorRecovery: undefined,
             }));
             break;
           }
@@ -945,7 +969,12 @@ export function App() {
             if (message.repositoryId && current.selectedRepositoryId !== message.repositoryId) {
               return current;
             }
-            return { ...current, loading: message.scope, error: undefined };
+            return {
+              ...current,
+              loading: message.scope,
+              error: undefined,
+              errorRecovery: undefined,
+            };
           });
           break;
         case 'clipboardCopied':
@@ -987,7 +1016,12 @@ export function App() {
                   ...current,
                   operationRepositoryIds,
                   ...(current.selectedRepositoryId === repositoryId
-                    ? { error: message.message }
+                    ? {
+                        error: message.message,
+                        errorRecovery: message.recovery
+                          ? { repositoryId, action: message.recovery }
+                          : undefined,
+                      }
                     : {}),
                 };
               });
@@ -1007,7 +1041,15 @@ export function App() {
             ) {
               return current;
             }
-            return { ...current, loading: undefined, error: message.message };
+            return {
+              ...current,
+              loading: undefined,
+              error: message.message,
+              errorRecovery:
+                message.recovery && message.repositoryId
+                  ? { repositoryId: message.repositoryId, action: message.recovery }
+                  : undefined,
+            };
           });
           break;
         case 'operationCompleted':
@@ -1027,7 +1069,7 @@ export function App() {
               ...current,
               operationRepositoryIds,
               ...(current.selectedRepositoryId === message.repositoryId
-                ? { error: undefined }
+                ? { error: undefined, errorRecovery: undefined }
                 : {}),
             };
           });
@@ -1049,7 +1091,7 @@ export function App() {
               ...current,
               operationRepositoryIds,
               ...(current.selectedRepositoryId === message.repositoryId
-                ? { error: undefined }
+                ? { error: undefined, errorRecovery: undefined }
                 : {}),
             };
           });
@@ -1159,6 +1201,7 @@ export function App() {
       selectedFile: undefined,
       loading: 'log',
       error: undefined,
+      errorRecovery: undefined,
     }));
     const selectionRequestId = requestId('repository');
     latestRepositorySelectionRequest.current = selectionRequestId;
@@ -1242,6 +1285,14 @@ export function App() {
 
   const selectRef = (ref: RefLabel): void => {
     const commit = state.commits.find((candidate) => candidate.hash === ref.target);
+    const branchFilter = ref.fullName === 'HEAD' ? [] : [ref.fullName];
+    if (
+      (ref.fullName === 'HEAD' || ref.kind === 'local' || ref.kind === 'remote') &&
+      (state.filters.branches.length !== branchFilter.length ||
+        state.filters.branches.some((branch, index) => branch !== branchFilter[index]))
+    ) {
+      applyFilters({ ...state.filters, branches: branchFilter });
+    }
     selectHash(ref.target, 'ref');
     if (commit) document.querySelector<HTMLElement>(`[data-commit-hash="${commit.hash}"]`)?.focus();
   };
@@ -1459,6 +1510,7 @@ export function App() {
       setState((current) => ({
         ...current,
         error: `Binary diff is not available for ${file.path}.`,
+        errorRecovery: undefined,
       }));
       return;
     }
@@ -1506,13 +1558,19 @@ export function App() {
       operation,
     });
     if (!validatedMessage || validatedMessage.type !== 'runOperation') {
-      setState((current) => ({ ...current, error: 'Invalid Git operation parameters.' }));
+      setState((current) => ({
+        ...current,
+        error: 'Invalid Git operation parameters.',
+        errorRecovery: undefined,
+      }));
       return;
     }
     activeOperationRequestByRepository.current.set(repositoryId, operationRequestId);
     setState((current) => ({
       ...current,
       operationRepositoryIds: new Set(current.operationRepositoryIds).add(repositoryId),
+      error: undefined,
+      errorRecovery: undefined,
     }));
     send(validatedMessage);
     setContextMenu(undefined);
@@ -1966,6 +2024,26 @@ export function App() {
         <div className="error-banner" role="alert">
           <span>{state.error}</span>
           <span className="error-actions">
+            {state.errorRecovery?.action.kind === 'forceDeleteBranch' ? (
+              <button
+                type="button"
+                className="warning-action"
+                aria-label={`Force delete branch ${state.errorRecovery.action.branch}`}
+                title="Delete this branch even though it contains unmerged commits"
+                onClick={() =>
+                  runOperation(
+                    {
+                      kind: 'deleteBranch',
+                      name: state.errorRecovery?.action.branch ?? '',
+                      force: true,
+                    },
+                    state.errorRecovery?.repositoryId,
+                  )
+                }
+              >
+                Force Delete
+              </button>
+            ) : null}
             <button
               type="button"
               aria-label="Retry Git query"
@@ -2080,11 +2158,6 @@ export function App() {
                   data-ref-item="true"
                   onClick={() => selectRef(ref)}
                   onKeyDown={(event) => handleRefKeyDown(event, ref)}
-                  onDoubleClick={() => {
-                    if (ref.kind === 'local' && !selectedRepository?.isBare) {
-                      runOperation({ kind: 'checkout', ref: ref.shortName });
-                    }
-                  }}
                   onContextMenu={(event) => {
                     event.preventDefault();
                     if (!state.selectedRepositoryId) return;

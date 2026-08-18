@@ -669,6 +669,82 @@ describe('WorkbenchController', () => {
     });
   });
 
+  it('drops persisted branch filters whose refs no longer exist', async () => {
+    const repository = await createRepository();
+    const initialMessages: ExtensionToWebviewMessage[] = [];
+    const createController = async (
+      messages: ExtensionToWebviewMessage[],
+      initialState?: PersistedWorkbenchState,
+      persistState?: (state: PersistedWorkbenchState) => Promise<void>,
+    ) =>
+      new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+        workspaceRoots: [repository],
+        gitService: new GitService(new GitRunner()),
+        gitRunner: new GitRunner(),
+        scanDepth: 0,
+        initialPageSize: 200,
+        pageSize: 500,
+        initialLayout: {
+          refsWidth: 220,
+          filesWidth: 320,
+          detailsHeight: 156,
+          filesViewMode: 'tree',
+        },
+        ...(initialState ? { initialState } : {}),
+        postMessage(message: ExtensionToWebviewMessage) {
+          messages.push(message);
+          return Promise.resolve(true);
+        },
+        persistLayout: () => Promise.resolve(),
+        ...(persistState ? { persistState } : {}),
+      });
+
+    const initial = await createController(initialMessages);
+    await initial.handleMessage({ type: 'ready', requestId: 'ready-stale-filter-source' });
+    const initialized = initialMessages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+
+    let persistedState: PersistedWorkbenchState | undefined;
+    const staleState: PersistedWorkbenchState = {
+      selectedRepositoryId: initialized.selectedRepositoryId,
+      repositories: {
+        [initialized.selectedRepositoryId]: {
+          filters: {
+            text: '',
+            branches: ['refs/heads/feature/v3.9.6/base'],
+            authors: [],
+            paths: [],
+          },
+        },
+      },
+    };
+    const reopenedMessages: ExtensionToWebviewMessage[] = [];
+    const reopened = await createController(reopenedMessages, staleState, (state) => {
+      persistedState = state;
+      return Promise.resolve();
+    });
+    await reopened.handleMessage({ type: 'ready', requestId: 'ready-stale-filter-reopen' });
+
+    expect(reopenedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'repositoryData',
+          requestId: 'ready-stale-filter-reopen',
+          repositoryId: initialized.selectedRepositoryId,
+          commits: expect.arrayContaining([expect.objectContaining({ subject: 'first commit' })]),
+          filters: expect.objectContaining({ branches: [] }),
+        }),
+      ]),
+    );
+    expect(
+      reopenedMessages.some(
+        (message) => message.type === 'error' && message.message.startsWith('Unknown branch filter:'),
+      ),
+    ).toBe(false);
+    expect(persistedState?.repositories[initialized.selectedRepositoryId]?.filters.branches).toEqual([]);
+  });
+
   it('loads enough history to restore a deep selected commit and workspace scroll anchor', async () => {
     const repository = await createRepository();
     const commits = Array.from({ length: 5400 }, (_, index): CommitSummary => {
@@ -1124,6 +1200,132 @@ describe('WorkbenchController', () => {
       type: 'repositoryData',
       requestId: 'run-hard-reset-refresh',
     });
+  });
+
+  it('offers force deletion when a normal branch deletion fails because it is not merged', async () => {
+    const repository = await createRepository();
+    const messages: ExtensionToWebviewMessage[] = [];
+    const run = vi.fn().mockRejectedValue(
+      new GitCommandError(
+        'Git command exited with code 1.',
+        ['branch', '-d', '--', 'feature/assets-fix'],
+        repository,
+        1,
+        Buffer.alloc(0),
+        Buffer.from("error: the branch 'feature/assets-fix' is not fully merged"),
+        false,
+        false,
+      ),
+    );
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(new GitRunner()),
+      gitRunner: new GitRunner(),
+      operationService: { run } as never,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-force-delete' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+
+    await controller.handleMessage({
+      type: 'runOperation',
+      requestId: 'delete-unmerged-branch',
+      repositoryId: initialized.selectedRepositoryId,
+      operation: { kind: 'deleteBranch', name: 'feature/assets-fix', force: false },
+    });
+
+    expect(messages.at(-1)).toMatchObject({
+      type: 'error',
+      requestId: 'delete-unmerged-branch',
+      repositoryId: initialized.selectedRepositoryId,
+      recovery: { kind: 'forceDeleteBranch', branch: 'feature/assets-fix' },
+    });
+  });
+
+  it('clears a deleted branch filter before refreshing the commit log', async () => {
+    const repository = await createRepository();
+    await execFileAsync('git', ['branch', 'feature/assets-fix'], { cwd: repository });
+    const messages: ExtensionToWebviewMessage[] = [];
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      operationService: new GitOperationService(runner),
+      confirmOperation: () => Promise.resolve(true),
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-delete-filtered-branch' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+
+    await controller.handleMessage({
+      type: 'updateFilters',
+      requestId: 'filter-branch-before-delete',
+      repositoryId: initialized.selectedRepositoryId,
+      filters: {
+        text: '',
+        branches: ['refs/heads/feature/assets-fix'],
+        authors: [],
+        paths: [],
+      },
+    });
+    messages.length = 0;
+
+    await controller.handleMessage({
+      type: 'runOperation',
+      requestId: 'delete-filtered-branch',
+      repositoryId: initialized.selectedRepositoryId,
+      operation: { kind: 'deleteBranch', name: 'feature/assets-fix', force: false },
+    });
+
+    expect(messages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'repositoryData',
+          repositoryId: initialized.selectedRepositoryId,
+          filters: expect.objectContaining({ branches: [] }),
+        }),
+        expect.objectContaining({
+          type: 'operationCompleted',
+          requestId: 'delete-filtered-branch',
+        }),
+      ]),
+    );
+    expect(
+      messages.some(
+        (message) => message.type === 'error' && message.message.startsWith('Unknown branch filter:'),
+      ),
+    ).toBe(false);
   });
 
   it('delegates force-push preparation and confirmation to the serialized operation service', async () => {

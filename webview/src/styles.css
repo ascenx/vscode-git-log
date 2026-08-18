@@ -88,6 +88,13 @@ select:focus-visible,
   color: var(--vscode-button-secondaryForeground);
 }
 
+.error-actions button.warning-action {
+  border-color: var(--vscode-inputValidation-warningBorder, #b89500);
+  background: var(--vscode-inputValidation-warningBackground, #352a05);
+  color: var(--vscode-inputValidation-warningForeground, #ffffff);
+  font-weight: 600;
+}
+
 .filter-bar {
   display: flex;
   align-items: center;

@@ -968,6 +968,168 @@ describe('WorkbenchApp', () => {
     expect(screen.getByText('HEAD details loaded')).toBeInTheDocument();
   });
 
+  it('uses branch clicks to filter the commit log instead of checking out', () => {
+    render(<App />);
+    const mainHash = 'a'.repeat(40);
+    const featureHash = 'b'.repeat(40);
+    const refs = [
+      {
+        fullName: 'refs/heads/main',
+        shortName: 'main',
+        kind: 'local' as const,
+        target: mainHash,
+        ahead: 0,
+        behind: 0,
+        isCurrent: true,
+      },
+      {
+        fullName: 'refs/heads/feature/assets-fix',
+        shortName: 'feature/assets-fix',
+        kind: 'local' as const,
+        target: featureHash,
+        ahead: 1,
+        behind: 0,
+        isCurrent: false,
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-branch-view',
+            repositories: [
+              {
+                id: 'repo-branch-view',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'main',
+                head: mainHash,
+              },
+            ],
+            selectedRepositoryId: 'repo-branch-view',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-branch-view',
+            repositoryId: 'repo-branch-view',
+            refs,
+            commits: [
+              {
+                hash: mainHash,
+                parents: [],
+                subject: 'main commit',
+                authorName: 'Alice',
+                authorEmail: 'alice@example.com',
+                authorTime: 1,
+                commitTime: 1,
+                refs: [refs[0]],
+              },
+            ],
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+
+    const featureBranch = screen.getByTitle('refs/heads/feature/assets-fix');
+    fireEvent.click(featureBranch);
+    const filterRequest = postedMessages.find((message) => message.type === 'updateFilters');
+    expect(filterRequest).toMatchObject({
+      type: 'updateFilters',
+      repositoryId: 'repo-branch-view',
+      filters: expect.objectContaining({ branches: ['refs/heads/feature/assets-fix'] }),
+    });
+    expect(postedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          type: 'selectCommit',
+          repositoryId: 'repo-branch-view',
+          hash: featureHash,
+        }),
+      ]),
+    );
+    expect(
+      postedMessages.some(
+        (message) => message.type === 'runOperation' && message.operation.kind === 'checkout',
+      ),
+    ).toBe(false);
+    if (!filterRequest || filterRequest.type !== 'updateFilters') return;
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: filterRequest.requestId,
+            repositoryId: 'repo-branch-view',
+            refs,
+            commits: [
+              {
+                hash: featureHash,
+                parents: [mainHash],
+                subject: 'feature branch commit',
+                authorName: 'Bob',
+                authorEmail: 'bob@example.com',
+                authorTime: 2,
+                commitTime: 2,
+                refs: [refs[1]],
+              },
+              {
+                hash: mainHash,
+                parents: [],
+                subject: 'main commit',
+                authorName: 'Alice',
+                authorEmail: 'alice@example.com',
+                authorTime: 1,
+                commitTime: 1,
+                refs: [refs[0]],
+              },
+            ],
+            filters: {
+              text: '',
+              branches: ['refs/heads/feature/assets-fix'],
+              authors: [],
+              paths: [],
+            },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    expect(screen.getByText('feature branch commit').closest('[role="row"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+
+    postedMessages.length = 0;
+    fireEvent.click(featureBranch);
+    fireEvent.doubleClick(featureBranch);
+    expect(
+      postedMessages.some(
+        (message) => message.type === 'runOperation' && message.operation.kind === 'checkout',
+      ),
+    ).toBe(false);
+  });
+
   it('does not offer current-branch reset actions while HEAD is detached', () => {
     render(<App />);
     const head = 'f'.repeat(40);
@@ -1343,7 +1505,6 @@ describe('WorkbenchApp', () => {
     completeLatestOperation();
     fireEvent.click(screen.getByRole('button', { name: 'Go to HEAD' }));
     fireEvent.doubleClick(screen.getByTitle('refs/heads/main'));
-    completeLatestOperation();
     fireEvent.click(screen.getByText('Operation target'));
     const operationSelection = postedMessages.filter((message) => message.type === 'selectCommit').at(-1);
     act(() => {
@@ -1397,10 +1558,6 @@ describe('WorkbenchApp', () => {
         }),
         expect.objectContaining({
           type: 'runOperation',
-          operation: { kind: 'checkout', ref: 'main' },
-        }),
-        expect.objectContaining({
-          type: 'runOperation',
           operation: { kind: 'cherryPick', hash },
         }),
         expect.objectContaining({
@@ -1421,6 +1578,11 @@ describe('WorkbenchApp', () => {
         }),
       ]),
     );
+    expect(
+      postedMessages.some(
+        (message) => message.type === 'runOperation' && message.operation.kind === 'checkout',
+      ),
+    ).toBe(false);
   });
 
   it('rejects stale selection details and closes a commit menu when switching repositories', () => {
@@ -1996,6 +2158,90 @@ describe('WorkbenchApp', () => {
         }),
       ]),
     );
+  });
+
+  it('dismisses an error banner after five seconds', () => {
+    vi.useFakeTimers();
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'error',
+            requestId: 'temporary-error',
+            message: 'Temporary Git error.',
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByRole('alert')).toHaveTextContent('Temporary Git error.');
+    act(() => vi.advanceTimersByTime(4_999));
+    expect(screen.getByRole('alert')).toBeInTheDocument();
+    act(() => vi.advanceTimersByTime(1));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('offers a warning-styled force delete after an unmerged branch deletion fails', () => {
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-force-delete',
+            repositories: [
+              {
+                id: 'repo-force-delete',
+                rootUri: 'file:///workspace/force-delete',
+                gitDirUri: 'file:///workspace/force-delete/.git',
+                displayName: 'force-delete',
+                isBare: false,
+              },
+            ],
+            selectedRepositoryId: 'repo-force-delete',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+    const operation = postedMessages.find((message) => message.type === 'runOperation');
+    expect(operation?.type).toBe('runOperation');
+    if (!operation || operation.type !== 'runOperation') return;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'error',
+            requestId: operation.requestId,
+            repositoryId: 'repo-force-delete',
+            message: "error: the branch 'feature/assets-fix' is not fully merged",
+            recovery: { kind: 'forceDeleteBranch', branch: 'feature/assets-fix' },
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+
+    const forceDelete = screen.getByRole('button', {
+      name: 'Force delete branch feature/assets-fix',
+    });
+    expect(forceDelete).toHaveClass('warning-action');
+    fireEvent.click(forceDelete);
+
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'runOperation',
+      repositoryId: 'repo-force-delete',
+      operation: { kind: 'deleteBranch', name: 'feature/assets-fix', force: true },
+    });
   });
 
   it('ignores an older same-repository error after a newer filter request starts', () => {

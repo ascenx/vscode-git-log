@@ -11,6 +11,7 @@ import {
 import { EMPTY_LOG_FILTERS } from '../git/logQuery';
 import type { GraphContinuationState } from '../graph/layoutCommitGraph';
 import type {
+  ErrorRecoveryAction,
   ExtensionToWebviewMessage,
   LogFilters,
   PersistedWorkbenchState,
@@ -326,7 +327,20 @@ export class WorkbenchController {
       if (error instanceof GitCommandError) {
         if (error.cancelled) return;
         const classified = classifyGitError(error);
-        await this.postError(message.requestId, classified.message, classified.detail, repositoryId);
+        const recovery: ErrorRecoveryAction | undefined =
+          message.type === 'runOperation' &&
+          message.operation.kind === 'deleteBranch' &&
+          !message.operation.force &&
+          /\bbranch\b[^\r\n]*\bis not fully merged\b/iu.test(classified.detail)
+            ? { kind: 'forceDeleteBranch', branch: message.operation.name }
+            : undefined;
+        await this.postError(
+          message.requestId,
+          classified.message,
+          classified.detail,
+          repositoryId,
+          recovery,
+        );
         return;
       }
       await this.postError(
@@ -713,6 +727,17 @@ export class WorkbenchController {
       abortController.signal,
     );
     if (logSequence !== this.logRequestSequence) return;
+    const storedFilters = this.filters.get(repositoryId) ?? EMPTY_LOG_FILTERS;
+    const knownRefs = new Set(refs.map((ref) => ref.fullName));
+    const validBranches = storedFilters.branches.filter((branch) => knownRefs.has(branch));
+    const filters =
+      validBranches.length === storedFilters.branches.length
+        ? storedFilters
+        : { ...storedFilters, branches: validBranches };
+    if (filters !== storedFilters) {
+      this.filters.set(repositoryId, filters);
+      await this.persistWorkbenchState();
+    }
     const scrollTop = this.scrollTops.get(repositoryId) ?? 0;
     const restoredPageSize = Math.ceil(scrollTop / 28) + this.options.initialPageSize;
     const limit = replace
@@ -728,7 +753,7 @@ export class WorkbenchController {
         limit: batchLimit,
         skip: skip + commits.length,
         refs,
-        filters: this.filters.get(repositoryId) ?? EMPTY_LOG_FILTERS,
+        filters,
         signal: abortController.signal,
       });
       if (logSequence !== this.logRequestSequence) return;
@@ -753,7 +778,7 @@ export class WorkbenchController {
       repositoryId,
       refs,
       commits,
-      filters: this.filters.get(repositoryId) ?? EMPTY_LOG_FILTERS,
+      filters,
       ...(restoredSelectedHash ? { selectedHash: restoredSelectedHash } : {}),
       ...(replace
         ? {
@@ -868,6 +893,30 @@ export class WorkbenchController {
     } catch (error) {
       operationError = error;
     } finally {
+      const deletedRef =
+        result && !result.cancelled
+          ? operation.kind === 'deleteBranch'
+            ? `refs/heads/${operation.name}`
+            : operation.kind === 'deleteRemoteBranch'
+              ? `refs/remotes/${operation.remote}/${operation.branch}`
+              : operation.kind === 'deleteTag'
+                ? `refs/tags/${operation.name}`
+                : undefined
+          : undefined;
+      if (deletedRef) {
+        let filtersChanged = false;
+        for (const candidate of this.repositories.values()) {
+          if (this.getOperationGroup(candidate) !== operationGroup) continue;
+          const filters = this.filters.get(candidate.id);
+          if (!filters?.branches.includes(deletedRef)) continue;
+          this.filters.set(candidate.id, {
+            ...filters,
+            branches: filters.branches.filter((branch) => branch !== deletedRef),
+          });
+          filtersChanged = true;
+        }
+        if (filtersChanged) await this.persistWorkbenchState();
+      }
       if (!result?.cancelled) this.pendingOperationRefreshGroups.add(operationGroup);
       const remaining = Math.max(0, (this.activeOperationGroups.get(operationGroup) ?? 1) - 1);
       if (remaining > 0) {
@@ -1021,6 +1070,7 @@ export class WorkbenchController {
     message: string,
     detail?: string,
     repositoryId?: string,
+    recovery?: ErrorRecoveryAction,
   ): Promise<void> {
     await this.options.postMessage({
       type: 'error',
@@ -1028,6 +1078,7 @@ export class WorkbenchController {
       ...(repositoryId ? { repositoryId } : {}),
       message,
       ...(detail ? { detail } : {}),
+      ...(recovery ? { recovery } : {}),
     });
   }
 }

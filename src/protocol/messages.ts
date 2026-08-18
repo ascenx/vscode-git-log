@@ -137,6 +137,8 @@ export type GitOperationRequest =
   | { kind: 'renameBranch'; oldName: string; newName: string }
   | { kind: 'deleteBranch'; name: string; force: boolean };
 
+export type ErrorRecoveryAction = { kind: 'forceDeleteBranch'; branch: string };
+
 export type ExtensionToWebviewMessage =
   | {
       type: 'initialize';
@@ -198,7 +200,14 @@ export type ExtensionToWebviewMessage =
   | { type: 'operationCompleted'; requestId: string; repositoryId: string; message: string }
   | { type: 'operationCancelled'; requestId: string; repositoryId: string }
   | { type: 'clipboardCopied'; requestId: string }
-  | { type: 'error'; requestId: string; repositoryId?: string; message: string; detail?: string };
+  | {
+      type: 'error';
+      requestId: string;
+      repositoryId?: string;
+      message: string;
+      detail?: string;
+      recovery?: ErrorRecoveryAction;
+    };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
