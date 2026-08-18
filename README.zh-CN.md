@@ -18,6 +18,24 @@ Git Log 的目标不是给 VS Code 内置 Source Control 换一个皮肤，而�
 code --install-extension ascenx.git-log
 ```
 
+## 功能截图
+
+### Git Log 主界面
+
+![Git Log 主界面](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/git_log_workbench.png)
+
+### 文件历史
+
+![文件历史](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/file_history.png)
+
+### 行历史
+
+![行历史](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/line_history.png)
+
+### 与分支或标签比较
+
+![与分支或标签比较](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/branch_compare.png)
+
 ## 核心原则
 
 1. 优先提供高信息密度、清晰且高效的 Git 日志操作路径。

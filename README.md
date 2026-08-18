@@ -18,6 +18,24 @@ You can also install it from the command line:
 code --install-extension ascenx.git-log
 ```
 
+## Screenshots
+
+### Git Log Workbench
+
+![Git Log Workbench](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/git_log_workbench.png)
+
+### File History
+
+![File History](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/file_history.png)
+
+### Line History
+
+![Line History](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/line_history.png)
+
+### Compare with Branch or Tag
+
+![Compare with Branch or Tag](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/branch_compare.png)
+
 ## Core principles
 
 1. Provide a dense, clear, and efficient Git history workflow.
