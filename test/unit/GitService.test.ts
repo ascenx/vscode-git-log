@@ -444,6 +444,25 @@ describe('GitService', () => {
     expect(commits.map((commit) => commit.subject)).toEqual(['修复登录 🚀']);
   });
 
+  it('falls back to message search when hexadecimal-looking text is not a commit hash', async () => {
+    const repository = await createHistoryFixture();
+    await writeFile(join(repository, 'numeric.txt'), 'numeric search\n');
+    await git(repository, 'add', 'numeric.txt');
+    await git(repository, 'commit', '-m', 'fix(pages): 3333311111231调整资产');
+    const service = new GitService(new GitRunner());
+
+    const commits = await service.getLog(repository, {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: '33333' },
+    });
+
+    expect(commits.map((commit) => commit.subject)).toEqual([
+      'fix(pages): 3333311111231调整资产',
+    ]);
+  });
+
   it('invalidates exhausted text-search caches when repository state changes', async () => {
     let output = Buffer.alloc(0);
     const run = vi.fn().mockImplementation(() =>

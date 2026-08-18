@@ -1,5 +1,7 @@
 :root {
   --explorer-row-height: 22px;
+  --global-toolbar-width: 224px;
+  --workbench-header-background: var(--vscode-sideBar-background);
   color-scheme: light dark;
   font-family: var(--vscode-font-family);
   font-size: var(--vscode-font-size);
@@ -21,6 +23,7 @@ body,
   width: 100%;
   height: 100%;
   margin: 0;
+  padding: 0;
   overflow: hidden;
 }
 
@@ -53,7 +56,7 @@ select:focus-visible,
 
 .workbench-shell {
   display: grid;
-  grid-template-rows: 38px minmax(0, 1fr) 156px;
+  grid-template-rows: minmax(0, 1fr) 4px 156px;
   height: 100%;
   min-width: 620px;
   background: var(--vscode-editor-background);
@@ -96,12 +99,30 @@ select:focus-visible,
 }
 
 .filter-bar {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
+  overflow-x: auto;
+  overflow-y: hidden;
   border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBar-background);
+  background: var(--workbench-header-background);
+  scrollbar-width: none;
+}
+
+.filter-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.workbench-shell.files-collapsed .filter-bar {
+  margin-right: calc(var(--global-toolbar-width) + 8px);
+}
+
+.filter-bar > button,
+.filter-bar > .field,
+.filter-bar > .operation-badge {
+  flex: 0 0 auto;
 }
 
 .filter-bar.history-active > :not(.history-toolbar) {
@@ -160,6 +181,7 @@ select:focus-visible,
 }
 
 .filter-bar button,
+.global-toolbar button,
 .field select,
 .field input,
 .segmented-control button {
@@ -169,11 +191,13 @@ select:focus-visible,
   background: transparent;
 }
 
-.filter-bar button {
+.filter-bar button,
+.global-toolbar button {
   padding: 0 9px;
 }
 
 .filter-bar button:hover,
+.global-toolbar button:hover,
 .segmented-control button:hover {
   background: var(--vscode-toolbar-hoverBackground);
 }
@@ -202,9 +226,11 @@ select:focus-visible,
 }
 
 .filter-popover {
-  position: absolute;
+  position: fixed;
   z-index: 10;
-  top: 34px;
+  top: 38px;
+  right: 8px;
+  left: auto;
   display: grid;
   min-width: 220px;
   max-width: min(360px, calc(100vw - 24px));
@@ -217,22 +243,6 @@ select:focus-visible,
   background: var(--vscode-menu-background);
   color: var(--vscode-menu-foreground);
   box-shadow: 0 4px 12px var(--vscode-widget-shadow);
-}
-
-.filter-branch {
-  left: min(510px, 48vw);
-}
-
-.filter-user {
-  left: min(580px, 56vw);
-}
-
-.filter-date {
-  left: min(640px, 62vw);
-}
-
-.filter-paths {
-  left: min(700px, 68vw);
 }
 
 .filter-popover-title {
@@ -322,8 +332,25 @@ select:focus-visible,
   color: var(--vscode-descriptionForeground);
 }
 
-.toolbar-spacer {
-  flex: 1;
+.global-toolbar {
+  position: fixed;
+  z-index: 6;
+  top: 0;
+  right: 0;
+  display: flex;
+  width: calc(var(--global-toolbar-width) + 8px);
+  height: 38px;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px;
+  padding: 5px 8px 5px 0;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--workbench-header-background);
+}
+
+.global-toolbar-spacer {
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--workbench-header-background);
 }
 
 .field {
@@ -361,7 +388,7 @@ select:focus-visible,
 
 .workspace-grid {
   display: grid;
-  grid-template-columns: 220px minmax(340px, 1fr) 320px;
+  grid-template-columns: 220px 1px minmax(340px, 1fr) 1px 320px;
   min-height: 0;
 }
 
@@ -373,20 +400,40 @@ select:focus-visible,
 
 .refs-pane {
   display: grid;
-  grid-template-rows: 30px minmax(0, 1fr);
+  grid-column: 1;
+  grid-template-rows: 38px 30px minmax(0, 1fr);
   overflow: hidden;
 }
 
-.refs-pane,
-.log-pane {
-  border-right: 1px solid var(--vscode-panel-border);
+.refs-resizer {
+  grid-column: 2;
+}
+
+.refs-toolbar {
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--workbench-header-background);
+}
+
+.refs-search-bar {
+  width: auto;
+  height: 28px;
+  margin: 5px 8px;
+}
+
+.refs-search-bar input {
+  min-width: 0;
+  flex: 1;
+  padding: 0 8px 0 2px;
+  border: 0;
+  outline: none;
+  background: transparent;
 }
 
 .pane-heading,
 .log-header {
   height: 30px;
   border-bottom: 1px solid var(--vscode-panel-border);
-  background: var(--vscode-sideBarSectionHeader-background);
+  background: var(--workbench-header-background);
   font-weight: 600;
 }
 
@@ -500,8 +547,13 @@ select:focus-visible,
 
 .log-pane {
   display: grid;
-  grid-template-rows: 30px minmax(0, 1fr);
+  grid-column: 3;
+  grid-template-rows: 38px 30px minmax(0, 1fr);
   overflow: hidden;
+}
+
+.files-resizer {
+  grid-column: 4;
 }
 
 .log-header-viewport {
@@ -727,17 +779,15 @@ select:focus-visible,
   background: transparent;
 }
 
-.pane-resizer:hover::after,
-.pane-resizer:focus-visible::after {
-  background: var(--vscode-focusBorder);
-}
-
 .pane-resizer.vertical {
+  width: 7px;
+  justify-self: center;
   cursor: col-resize;
 }
 
 .pane-resizer.vertical::after {
-  inset: 0 1px;
+  inset: 0 3px;
+  background: var(--vscode-panel-border);
 }
 
 .pane-resizer.horizontal {
@@ -746,6 +796,11 @@ select:focus-visible,
 
 .pane-resizer.horizontal::after {
   inset: 1px 0;
+}
+
+.pane-resizer:hover::after,
+.pane-resizer:focus-visible::after {
+  background: var(--vscode-focusBorder);
 }
 
 .context-menu {
@@ -912,7 +967,8 @@ select:focus-visible,
 
 .files-pane {
   display: grid;
-  grid-template-rows: 30px minmax(0, 1fr) auto;
+  grid-column: 5;
+  grid-template-rows: 38px 30px minmax(0, 1fr) auto;
   overflow: hidden;
 }
 

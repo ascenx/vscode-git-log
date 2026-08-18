@@ -166,7 +166,7 @@ export class GitService {
 
       const text = filters.text.trim();
       if (/^[0-9a-f]{4,64}$/iu.test(text)) {
-        let resolvedHash: string;
+        let resolvedHash: string | undefined;
         try {
           const resolution = await this.runner.run(
             ['rev-parse', '--verify', '--end-of-options', `${text}^{commit}`],
@@ -174,46 +174,47 @@ export class GitService {
           );
           resolvedHash = resolution.stdout.toString('utf8').trim();
         } catch (error) {
-          if (error instanceof GitCommandError && !error.cancelled) return [];
-          throw error;
+          if (!(error instanceof GitCommandError) || error.cancelled) throw error;
         }
 
-        if (filters.branches.length) {
-          const containment = await Promise.all(
-            filters.branches.map(async (branch) => {
-              try {
-                await this.runner.run(['merge-base', '--is-ancestor', resolvedHash, branch], {
-                  cwd,
-                  ...(query.signal ? { signal: query.signal } : {}),
-                  timeoutMs: 30_000,
-                });
-                return true;
-              } catch (error) {
-                if (error instanceof GitCommandError && !error.cancelled) return false;
-                throw error;
-              }
-            }),
-          );
-          if (!containment.some(Boolean)) return [];
-        }
+        if (resolvedHash) {
+          if (filters.branches.length) {
+            const containment = await Promise.all(
+              filters.branches.map(async (branch) => {
+                try {
+                  await this.runner.run(['merge-base', '--is-ancestor', resolvedHash, branch], {
+                    cwd,
+                    ...(query.signal ? { signal: query.signal } : {}),
+                    timeoutMs: 30_000,
+                  });
+                  return true;
+                } catch (error) {
+                  if (error instanceof GitCommandError && !error.cancelled) return false;
+                  throw error;
+                }
+              }),
+            );
+            if (!containment.some(Boolean)) return [];
+          }
 
-        const hashFilters: LogFilters = { ...filters, text: '', branches: [] };
-        const args = buildLogArguments({
-          limit: 1,
-          skip: 0,
-          format: LOG_FORMAT,
-          filters: hashFilters,
-        });
-        const headIndex = args.lastIndexOf('HEAD');
-        if (headIndex > 0 && args[headIndex - 1] === '--end-of-options') {
-          args.splice(headIndex - 1, 2, '--no-walk', resolvedHash);
+          const hashFilters: LogFilters = { ...filters, text: '', branches: [] };
+          const args = buildLogArguments({
+            limit: 1,
+            skip: 0,
+            format: LOG_FORMAT,
+            filters: hashFilters,
+          });
+          const headIndex = args.lastIndexOf('HEAD');
+          if (headIndex > 0 && args[headIndex - 1] === '--end-of-options') {
+            args.splice(headIndex - 1, 2, '--no-walk', resolvedHash);
+          }
+          const result = await this.runner.run(args, {
+            cwd,
+            ...(query.signal ? { signal: query.signal } : {}),
+            timeoutMs: 30_000,
+          });
+          return parseLog(result.stdout).map((commit) => attachRefs(commit, query.refs));
         }
-        const result = await this.runner.run(args, {
-          cwd,
-          ...(query.signal ? { signal: query.signal } : {}),
-          timeoutMs: 30_000,
-        });
-        return parseLog(result.stdout).map((commit) => attachRefs(commit, query.refs));
       }
 
       const cache = this.getTextSearchCache(cwd, filters);

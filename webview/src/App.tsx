@@ -1,4 +1,5 @@
 import {
+  useCallback,
   useEffect,
   useMemo,
   useRef,
@@ -208,6 +209,7 @@ interface CommitListProps {
   hasMore: boolean;
   loading: boolean;
   initialScrollTop: number;
+  horizontalScrollResetKey: string;
   onScrollTopChange(scrollTop: number): void;
   onHorizontalScroll(scrollLeft: number): void;
   onSelect(commit: CommitSummary, extend: boolean): void;
@@ -223,6 +225,7 @@ function CommitList({
   hasMore,
   loading,
   initialScrollTop,
+  horizontalScrollResetKey,
   onScrollTopChange,
   onHorizontalScroll,
   onSelect,
@@ -274,6 +277,14 @@ function CommitList({
     viewport.scrollTop = initialScrollTop;
     setScrollTop(initialScrollTop);
   }, [initialScrollTop]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    viewport.scrollLeft = 0;
+    onHorizontalScroll(0);
+    return () => onHorizontalScroll(0);
+  }, [horizontalScrollResetKey, onHorizontalScroll]);
 
 
   return (
@@ -504,10 +515,14 @@ export function App() {
   const vscode = useMemo(() => getVsCodeApi(), []);
   const [state, setState] = useState<WorkbenchState>(initialState);
   const [selectedCommitHashes, setSelectedCommitHashes] = useState<string[]>([]);
+  const [refSearch, setRefSearch] = useState('');
   const [scrollTopByRepository, setScrollTopByRepository] = useState<Record<string, number>>(() =>
     readScrollTopByRepository(vscode.getState()),
   );
   const [filterPopup, setFilterPopup] = useState<'branch' | 'user' | 'date' | 'paths' | undefined>();
+  const [filterPopoverPosition, setFilterPopoverPosition] = useState<
+    { top: number; right: number } | undefined
+  >();
   const [contextMenu, setContextMenu] = useState<
     | {
         kind: 'commit';
@@ -572,7 +587,12 @@ export function App() {
   });
   const searchRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLElement>(null);
-  const logHeaderViewportRef = useRef<HTMLDivElement>(null);
+  const logHeaderRef = useRef<HTMLDivElement>(null);
+  const syncLogHeaderScroll = useCallback((scrollLeft: number): void => {
+    if (logHeaderRef.current) {
+      logHeaderRef.current.style.transform = `translateX(${-scrollLeft}px)`;
+    }
+  }, []);
   const detailsRef = useRef<HTMLElement>(null);
   const selectedRepositoryIdRef = useRef<string | undefined>(undefined);
   const latestRepositorySelectionRequest = useRef<string | undefined>(undefined);
@@ -589,6 +609,22 @@ export function App() {
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
+  const visibleRefs = useMemo(() => {
+    const query = refSearch.trim().toLocaleLowerCase();
+    if (!query) return state.refs;
+    return state.refs.filter((ref) =>
+      [ref.shortName, ref.fullName, ref.remote]
+        .filter((value): value is string => Boolean(value))
+        .some((value) => value.toLocaleLowerCase().includes(query)),
+    );
+  }, [refSearch, state.refs]);
+  const headMatchesRefSearch = useMemo(() => {
+    const query = refSearch.trim().toLocaleLowerCase();
+    if (!query) return true;
+    return [selectedRepository?.currentBranch, selectedRepository?.head]
+      .filter((value): value is string => Boolean(value))
+      .some((value) => value.toLocaleLowerCase().includes(query));
+  }, [refSearch, selectedRepository?.currentBranch, selectedRepository?.head]);
   const authorFilterOptions = useMemo(() => {
     const userName = selectedRepository?.userName?.trim();
     const userEmail = selectedRepository?.userEmail?.trim();
@@ -639,6 +675,27 @@ export function App() {
   const filesCollapsed = Boolean(
     state.layout.filesCollapsed || (responsiveCollapse.files && !responsiveExpanded.files),
   );
+  useEffect(() => {
+    if (!filterPopup) return;
+    const updatePosition = (): void => {
+      const bounds = logRef.current?.getBoundingClientRect();
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+      if (!bounds || bounds.width <= 0 || bounds.height <= 0 || viewportWidth <= 0) return;
+      setFilterPopoverPosition({
+        top: Math.max(0, bounds.top + 38),
+        right: Math.max(8, viewportWidth - Math.min(bounds.right, viewportWidth) + 8),
+      });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    return () => window.removeEventListener('resize', updatePosition);
+  }, [
+    filesCollapsed,
+    filterPopup,
+    refsCollapsed,
+    state.layout.filesWidth,
+    state.layout.refsWidth,
+  ]);
   useEffect(() => {
     if (!window.matchMedia) return;
     const filesQuery = window.matchMedia('(max-width: 900px)');
@@ -1247,6 +1304,7 @@ export function App() {
     setContextMenu(undefined);
     setNamedOperation(undefined);
     setFilterPopup(undefined);
+    setRefSearch('');
     activeSelectionRequest.current = undefined;
     activeCommitMessagesRequest.current = undefined;
     commitSelectionAnchor.current = undefined;
@@ -1698,39 +1756,36 @@ export function App() {
     (state.layout.dateColumnWidth ?? 125) +
     (state.layout.refsColumnWidth ?? 150);
 
-  return (
-    <main
-      className="workbench-shell"
-      style={{ gridTemplateRows: `38px minmax(0, 1fr) 4px ${state.layout.detailsHeight}px` }}
-      onKeyDown={(event) => {
-        if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
-          event.preventDefault();
-          searchRef.current?.focus();
-        } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'l') {
-          event.preventDefault();
-          logRef.current?.focus();
-        } else if (
-          (event.metaKey || event.ctrlKey) &&
-          event.key.toLowerCase() === 'c' &&
-          state.selectedHash &&
-          !(event.target instanceof HTMLInputElement) &&
-          !(event.target instanceof HTMLTextAreaElement) &&
-          !(event.target instanceof HTMLSelectElement)
-        ) {
-          event.preventDefault();
-          send({
-            type: 'copyToClipboard',
-            requestId: requestId('copy-hash'),
-            text: state.selectedHash,
-          });
-        } else if (event.key === 'Escape') {
-          setContextMenu(undefined);
-          setNamedOperation(undefined);
-          setFilterPopup(undefined);
-          setHistoryParentPicker(undefined);
-        }
-      }}
-    >
+  const handleWorkbenchKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
+    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+      event.preventDefault();
+      searchRef.current?.focus();
+    } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'l') {
+      event.preventDefault();
+      logRef.current?.focus();
+    } else if (
+      (event.metaKey || event.ctrlKey) &&
+      event.key.toLowerCase() === 'c' &&
+      state.selectedHash &&
+      !(event.target instanceof HTMLInputElement) &&
+      !(event.target instanceof HTMLTextAreaElement) &&
+      !(event.target instanceof HTMLSelectElement)
+    ) {
+      event.preventDefault();
+      send({
+        type: 'copyToClipboard',
+        requestId: requestId('copy-hash'),
+        text: state.selectedHash,
+      });
+    } else if (event.key === 'Escape') {
+      setContextMenu(undefined);
+      setNamedOperation(undefined);
+      setFilterPopup(undefined);
+      setHistoryParentPicker(undefined);
+    }
+  };
+
+  const commitToolbar = (
       <header
         className={`filter-bar${state.history ? ' history-active' : ''}`}
         role="toolbar"
@@ -1885,7 +1940,12 @@ export function App() {
           Paths{state.filters.paths.length ? ` (${String(state.filters.paths.length)})` : ''}
         </button>
         {filterPopup ? (
-          <div className={`filter-popover filter-${filterPopup}`} role="dialog" aria-label={`${filterPopup} filter`}>
+          <div
+            className={`filter-popover filter-${filterPopup}`}
+            role="dialog"
+            aria-label={`${filterPopup} filter`}
+            style={filterPopoverPosition}
+          >
             {filterPopup === 'branch' ? (
               <>
                 <div className="filter-popover-title">Branches</div>
@@ -2032,7 +2092,11 @@ export function App() {
             </button>
           </div>
         ) : null}
-        <span className="toolbar-spacer" />
+      </header>
+  );
+
+  const globalToolbar = (
+    <header className="global-toolbar" role="toolbar" aria-label="Global Git actions">
         <button
           type="button"
           aria-label="Refresh log"
@@ -2099,7 +2163,7 @@ export function App() {
                 : {
                     kind: 'toolbar',
                     repositoryId: state.selectedRepositoryId as string,
-                    x: bounds.right - 170,
+                    x: bounds.right - 190,
                     y: bounds.bottom + 2,
                   },
             );
@@ -2107,8 +2171,16 @@ export function App() {
         >
           ⋮
         </button>
-      </header>
+    </header>
+  );
 
+  return (
+    <main
+      className={`workbench-shell${filesCollapsed ? ' files-collapsed' : ''}`}
+      style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${state.layout.detailsHeight}px` }}
+      onKeyDown={handleWorkbenchKeyDown}
+    >
+      {globalToolbar}
       {state.error ? (
         <div className="error-banner" role="alert">
           <span>{state.error}</span>
@@ -2170,8 +2242,8 @@ export function App() {
         className="workspace-grid"
         style={{
           gridTemplateColumns: `${refsCollapsed ? 0 : state.layout.refsWidth}px ${
-            refsCollapsed ? 0 : 4
-          }px minmax(340px, 1fr) ${filesCollapsed ? 0 : 4}px ${
+            refsCollapsed ? 0 : 1
+          }px minmax(340px, 1fr) ${filesCollapsed ? 0 : 1}px ${
             filesCollapsed ? 0 : state.layout.filesWidth
           }px`,
         }}
@@ -2181,6 +2253,26 @@ export function App() {
           aria-label="Git references"
           hidden={refsCollapsed}
         >
+          <div className="refs-toolbar">
+            <label className="refs-search-bar field">
+              <span className="search-icon" aria-hidden="true">
+                ⌕
+              </span>
+              <input
+                type="search"
+                aria-label="Filter branches"
+                placeholder="Filter branches"
+                value={refSearch}
+                onChange={(event) => setRefSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== 'Escape' || !refSearch) return;
+                  event.preventDefault();
+                  event.stopPropagation();
+                  setRefSearch('');
+                }}
+              />
+            </label>
+          </div>
           <div className="pane-heading">Branches</div>
           <div className="refs-scroll">
             <section className="ref-group">
@@ -2193,7 +2285,7 @@ export function App() {
                 <span aria-hidden="true">{collapsedRefGroups.has('head') ? '›' : '⌄'}</span>
                 <span>HEAD</span>
               </button>
-              {selectedRepository?.head && !collapsedRefGroups.has('head') ? (
+              {selectedRepository?.head && headMatchesRefSearch && !collapsedRefGroups.has('head') ? (
                 <button
                   type="button"
                   className="ref-item current-ref"
@@ -2231,7 +2323,7 @@ export function App() {
               ) : null}
             </section>
             {refGroups.map((group) => {
-              const refs = state.refs.filter((ref) => ref.kind === group.kind);
+              const refs = visibleRefs.filter((ref) => ref.kind === group.kind);
               const collapsed = collapsedRefGroups.has(group.kind);
               const remoteGroupName = (ref: RefLabel): string => ref.remote ?? 'Unresolved';
               const remoteGroups =
@@ -2309,7 +2401,7 @@ export function App() {
         </nav>
 
         <div
-          className="pane-resizer vertical"
+          className="pane-resizer vertical refs-resizer"
           role="separator"
           aria-label="Resize references pane"
           aria-orientation="vertical"
@@ -2347,8 +2439,9 @@ export function App() {
             } as CSSProperties
           }
         >
-          <div className="log-header-viewport" ref={logHeaderViewportRef}>
-            <div className="log-header" role="row">
+          {commitToolbar}
+          <div className="log-header-viewport">
+            <div className="log-header" role="row" ref={logHeaderRef}>
               <span className="column-header" role="columnheader">
                 Commit
                 <div
@@ -2433,6 +2526,11 @@ export function App() {
           </div>
           {(state.history?.entries ?? state.commits).length ? (
             <CommitList
+              horizontalScrollResetKey={
+                state.history
+                  ? `history:${state.history.repositoryId}:${state.history.path}`
+                  : `log:${state.selectedRepositoryId ?? ''}`
+              }
               commits={state.history?.entries ?? state.commits}
               graphLayout={graphLayout}
               selectedHashes={selectedCommitHashSet}
@@ -2471,11 +2569,7 @@ export function App() {
                   });
                 }, 200);
               }}
-              onHorizontalScroll={(scrollLeft) => {
-                if (logHeaderViewportRef.current) {
-                  logHeaderViewportRef.current.scrollLeft = scrollLeft;
-                }
-              }}
+              onHorizontalScroll={syncLogHeaderScroll}
               onSelect={selectCommit}
               onContextMenu={(commit, x, y) => {
                 if (state.history) return;
@@ -2528,7 +2622,7 @@ export function App() {
         </section>
 
         <div
-          className="pane-resizer vertical"
+          className="pane-resizer vertical files-resizer"
           role="separator"
           aria-label="Resize changed files pane"
           aria-orientation="vertical"
@@ -2549,6 +2643,7 @@ export function App() {
           aria-label="Changed files"
           hidden={filesCollapsed}
         >
+          <div className="global-toolbar-spacer" aria-hidden="true" />
           <div className="pane-heading files-heading">
             <span>Changed Files</span>
             {state.details && state.details.parents.length > 1 ? (

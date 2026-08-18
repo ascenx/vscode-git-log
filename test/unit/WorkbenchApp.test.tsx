@@ -140,10 +140,27 @@ describe('WorkbenchApp', () => {
   it('renders the four-region Git log workspace', () => {
     render(<App />);
 
-    expect(screen.getByRole('toolbar', { name: 'Git log filters' })).toBeInTheDocument();
+    const commitLog = screen.getByRole('grid', { name: 'Commit log' });
+    const commitFilters = screen.getByRole('toolbar', { name: 'Git log filters' });
+    const globalActions = screen.getByRole('toolbar', { name: 'Global Git actions' });
+    const references = screen.getByRole('navigation', { name: 'Git references' });
+
+    expect(commitLog).toContainElement(commitFilters);
+    expect(commitLog).not.toContainElement(globalActions);
+    for (const name of [
+      'Refresh log',
+      'Go to HEAD',
+      'Fetch remotes',
+      'Collapse references pane',
+      'Collapse changed files pane',
+      'More actions',
+    ]) {
+      expect(globalActions).toContainElement(screen.getByRole('button', { name }));
+    }
     expect(screen.getByRole('searchbox', { name: 'Text or hash' })).toBeInTheDocument();
-    expect(screen.getByRole('navigation', { name: 'Git references' })).toBeInTheDocument();
-    expect(screen.getByRole('grid', { name: 'Commit log' })).toBeInTheDocument();
+    const branchSearch = screen.getByRole('searchbox', { name: 'Filter branches' });
+    expect(references).toContainElement(branchSearch);
+    expect(branchSearch.closest('.refs-toolbar')).not.toBeNull();
     expect(screen.getByRole('region', { name: 'Changed files' })).toBeInTheDocument();
     expect(screen.getByRole('region', { name: 'Commit details' })).toBeInTheDocument();
     expect(screen.getByText('HEAD')).toBeInTheDocument();
@@ -1377,6 +1394,88 @@ describe('WorkbenchApp', () => {
     ).toBe(false);
   });
 
+  it('filters the references pane locally without querying the commit log', () => {
+    render(<App />);
+    const mainHash = 'a'.repeat(40);
+    const featureHash = 'b'.repeat(40);
+    const refs = [
+      {
+        fullName: 'refs/heads/main',
+        shortName: 'main',
+        kind: 'local' as const,
+        target: mainHash,
+        ahead: 0,
+        behind: 0,
+        isCurrent: true,
+      },
+      {
+        fullName: 'refs/heads/feature/network-switch',
+        shortName: 'feature/network-switch',
+        kind: 'local' as const,
+        target: featureHash,
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      },
+    ];
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-reference-search',
+            repositories: [
+              {
+                id: 'repo-reference-search',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'main',
+                head: mainHash,
+              },
+            ],
+            selectedRepositoryId: 'repo-reference-search',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-reference-search',
+            repositoryId: 'repo-reference-search',
+            refs,
+            commits: [],
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+
+    const search = screen.getByRole('searchbox', { name: 'Filter branches' });
+    fireEvent.change(search, { target: { value: 'network' } });
+
+    expect(screen.queryByTitle('refs/heads/main')).not.toBeInTheDocument();
+    expect(screen.getByTitle('refs/heads/feature/network-switch')).toBeInTheDocument();
+    expect(postedMessages).toEqual([]);
+
+    fireEvent.keyDown(search, { key: 'Escape' });
+    expect(search).toHaveValue('');
+    expect(screen.getByTitle('refs/heads/main')).toBeInTheDocument();
+  });
+
   it('does not offer current-branch reset actions while HEAD is detached', () => {
     render(<App />);
     const head = 'f'.repeat(40);
@@ -1677,6 +1776,35 @@ describe('WorkbenchApp', () => {
     expect(screen.getByLabelText('Custom date from')).toBeInTheDocument();
     expect(screen.getByLabelText('Custom date to')).toBeInTheDocument();
     vi.useRealTimers();
+  });
+
+  it('positions commit filter popovers from the visible commit pane bounds', () => {
+    const innerWidth = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1000);
+    try {
+      render(<App />);
+      const commitLog = screen.getByRole('grid', { name: 'Commit log' });
+      commitLog.getBoundingClientRect = () =>
+        ({
+          x: 220,
+          y: 100,
+          top: 100,
+          right: 564,
+          bottom: 600,
+          left: 220,
+          width: 344,
+          height: 500,
+          toJSON: () => ({}),
+        }) as DOMRect;
+
+      fireEvent.click(screen.getByRole('button', { name: 'Paths' }));
+
+      expect(screen.getByRole('dialog', { name: 'paths filter' })).toHaveStyle({
+        top: '138px',
+        right: '444px',
+      });
+    } finally {
+      innerWidth.mockRestore();
+    }
   });
 
   it('sends typed Git operations from toolbar, refs, and commit details', () => {
@@ -2020,7 +2148,7 @@ describe('WorkbenchApp', () => {
     });
   });
 
-  it('uses resized column totals for horizontal scrolling and keeps the header aligned', () => {
+  it('keeps the header aligned when its native scroll range is shorter than the commit list', () => {
     render(<App />);
     act(() => {
       window.dispatchEvent(
@@ -2084,14 +2212,45 @@ describe('WorkbenchApp', () => {
     expect(log.style.getPropertyValue('--log-content-width')).toBe('1740px');
     const viewport = document.querySelector<HTMLElement>('.commit-viewport');
     const headerViewport = document.querySelector<HTMLElement>('.log-header-viewport');
+    const header = document.querySelector<HTMLElement>('.log-header');
     expect(viewport).not.toBeNull();
     expect(headerViewport).not.toBeNull();
-    if (!viewport || !headerViewport) return;
+    expect(header).not.toBeNull();
+    if (!viewport || !headerViewport || !header) return;
+
+    let headerScrollLeft = 0;
+    Object.defineProperty(headerViewport, 'scrollLeft', {
+      configurable: true,
+      get: () => headerScrollLeft,
+      set: (value: number) => {
+        headerScrollLeft = Math.min(value, 400);
+      },
+    });
 
     viewport.scrollLeft = 420;
     fireEvent.scroll(viewport);
 
-    expect(headerViewport.scrollLeft).toBe(420);
+    expect(headerScrollLeft).toBe(0);
+    expect(header).toHaveStyle({ transform: 'translateX(-420px)' });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'empty-horizontal-columns',
+            repositoryId: 'repo-horizontal-columns',
+            refs: [],
+            commits: [],
+            filters: { text: 'missing', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    expect(header).toHaveStyle({ transform: 'translateX(0px)' });
   });
 
   it('always shows Commit, Author, Date, and Refs without column settings', () => {
@@ -2363,17 +2522,20 @@ describe('WorkbenchApp', () => {
 
     render(<App />);
 
+    expect(document.querySelector('.workbench-shell')).toHaveClass('files-collapsed');
     expect(screen.queryByRole('region', { name: 'Changed files' })).not.toBeInTheDocument();
     expect(screen.queryByRole('separator', { name: 'Resize changed files pane' })).not.toBeInTheDocument();
     expect(screen.getByRole('navigation', { name: 'Git references' })).toBeInTheDocument();
+    expect(screen.getByRole('toolbar', { name: 'Global Git actions' })).toBeInTheDocument();
     expect(document.querySelector<HTMLElement>('.workspace-grid')?.style.gridTemplateColumns).toBe(
-      '220px 4px minmax(340px, 1fr) 0px 0px',
+      '220px 1px minmax(340px, 1fr) 0px 0px',
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Expand changed files pane' }));
 
     expect(screen.getByRole('region', { name: 'Changed files' })).toBeInTheDocument();
     expect(screen.getByRole('separator', { name: 'Resize changed files pane' })).toBeInTheDocument();
+    expect(document.querySelector('.workbench-shell')).not.toHaveClass('files-collapsed');
   });
 
   it('offers retry, Git output, and diagnostic actions for errors', () => {
@@ -3532,10 +3694,22 @@ describe('WorkbenchApp', () => {
     fireEvent.click(userButton);
     expect(screen.getByRole('dialog', { name: 'user filter' })).toBeInTheDocument();
     const moreButton = screen.getByRole('button', { name: 'More actions' });
+    moreButton.getBoundingClientRect = () =>
+      ({
+        x: 965,
+        y: 5,
+        top: 5,
+        right: 992,
+        bottom: 32,
+        left: 965,
+        width: 27,
+        height: 27,
+        toJSON: () => ({}),
+      }) as DOMRect;
     fireEvent.pointerDown(moreButton);
     fireEvent.click(moreButton);
     expect(screen.queryByRole('dialog', { name: 'user filter' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menu', { name: 'toolbar actions' })).toBeInTheDocument();
+    expect(screen.getByRole('menu', { name: 'toolbar actions' })).toHaveStyle({ left: '802px' });
 
     fireEvent.pointerDown(moreButton);
     fireEvent.click(moreButton);
