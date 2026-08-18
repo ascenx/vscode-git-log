@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.1-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.2-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
 
 A visual Git log, commit graph, history browser, and repository operations extension for Visual Studio Code.
 
@@ -71,6 +71,9 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Combined Text/Hash, Branch, User, Date, and Path filters with cancellation and stale-response rejection. Repository refreshes do not overwrite an active search draft. Text queries scan the full message, author name, and email in canonical `git log --date-order` order while preserving child-before-parent topology.
 - Changed-file handling for root, merge, rename, copy, and binary commits, with native VS Code diffs.
 - Checkout, Branch, Tag, Fetch, Pull, Push, Cherry-pick, Revert, Merge, Rebase, Reset, and branch rename/delete operations, with context menus for Local, Remote, Tag, and HEAD refs.
+- Branch clicks select and display that branch's commits without checking it out; checkout remains an explicit Ref context-menu action.
+- Contiguous commits can be selected with Shift+click or Shift+Arrow keys, then dropped or squashed from the Commit context menu. Squash preloads the selected full commit messages in visible top-to-bottom order. History rewrites require a clean worktree and explicit confirmation, and reject root commits, merge commits, stale selections, and changes to the active branch or HEAD during confirmation.
+- Unmerged branch deletion errors offer a warning-colored Force Delete action, and error notices remain visible for five seconds before closing automatically.
 - Serialized writes per common Git directory, per-repository Webview operation locks, destructive-operation confirmation dialogs, classified Git errors, redacted Output Channel diagnostics, and post-operation repository refreshes.
 - Draggable panes and columns, collapsible panes, and workspace-scoped width and height persistence. Commit, Author, Date, and Refs columns are always visible, and deep-page selections and scroll positions survive reopening the panel.
 - Resizable Commit and Refs table columns with persisted widths. Changed Files supports horizontal scrolling for deep paths, with additions in green and deletions in red.
@@ -101,9 +104,18 @@ Build a local VSIX with:
 npm run package
 ```
 
+Create the `v0.0.2` tag after committing and pushing the release changes. The GitHub Actions release workflow validates the repository, packages a version-matched VSIX, and uploads it to the corresponding GitHub Release:
+
+```text
+git push origin main
+git tag v0.0.2
+git push origin v0.0.2
+```
+
 ## Usage tips
 
-- Double-click a Local branch to check it out. Right-click a Ref or Commit to open its context menu.
+- Click or double-click a Local or Remote branch to display its commit history without checking it out. Use the Local branch context menu when you explicitly want to check it out.
+- Select a commit, then hold Shift while clicking another commit or pressing Up/Down to extend a contiguous range. Right-click the range to choose `Drop commits…` or `Squash commits…`.
 - Click a Changed File to inspect its path, status, and change summary. Double-click it or choose `Show Diff` to use the native VS Code Diff Editor.
 - Right-click a normal local file and open `Git Log`: with no selection it shows current-line history, with a selection it shows selection history, and it can also open complete File History in a dedicated tab. Branch/Tag comparison uses native VS Code diff capabilities, including minimap, syntax highlighting, search, and diff shortcuts.
 - Use `Ctrl/Cmd+F` to focus search, `Ctrl/Cmd+L` to focus the Commit Log, and `Ctrl/Cmd+C` to copy the selected commit's full hash. Arrow keys, PageUp/PageDown, Home, and End navigate commits.

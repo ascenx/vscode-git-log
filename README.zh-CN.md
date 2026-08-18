@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.1-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.2-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
 
 一个面向 VS Code 的可视化 Git 日志、提交图谱、历史浏览和仓库操作扩展。
 
@@ -71,6 +71,9 @@ code --install-extension ascenx.git-log
 - Text/Hash、Branch、User、Date、Path 组合过滤，旧查询取消和过期响应拒绝；仓库状态刷新不会覆盖正在编辑的搜索草稿；文本查询按 canonical `git log --date-order` 顺序扫描完整正文、作者姓名与邮箱，保留 child-before-parent 拓扑。
 - Root、Merge、Rename、Copy、Binary 等 changed-files 场景及 VS Code 原生 Diff。
 - Checkout、Branch、Tag、Fetch、Pull、Push、Cherry-pick、Revert、Merge、Rebase、Reset、Rename/Delete Branch，以及 Local/Remote/Tag/HEAD 对应的上下文菜单。
+- 单击或双击分支只会选择该分支并展示对应 Commit，不会自动 Checkout；Checkout 保留在 Ref 右键菜单中，必须显式执行。
+- 支持使用 Shift+单击或 Shift+方向键连续多选 Commit，并通过 Commit 右键菜单执行 `Drop commits…` 或 `Squash commits…`；Squash 输入框会按界面从上到下预填所有选中 Commit 的完整消息。历史改写要求工作区干净并二次确认，同时拒绝 Root Commit、Merge Commit、过期选区，以及确认期间发生的当前分支或 HEAD 变化。
+- 删除未合并分支失败时提供警告色的强制删除按钮；错误提示固定展示五秒后自动关闭。
 - 同 common Git dir 写操作串行、按仓库维护 Webview in-flight 锁、危险操作模态确认、Git 错误分类、脱敏 Output Channel 和完成后重新读取 Git 状态。
 - Pane/Column 拖动、Pane 折叠与 workspace 宽高持久化；Commit、Author、Date、Refs 四列固定展示，深分页选择和滚动位置可在重开面板后恢复。
 - Commit 与 Refs 等表格列的分隔线可直接拖动并持久化宽度；Changed Files 支持深路径横向滚动，增删行数分别使用绿色和红色。
@@ -101,9 +104,18 @@ npm run build
 npm run package
 ```
 
+提交并推送发布改动后创建 `v0.0.2` Tag。GitHub Actions 会自动校验仓库、打包版本一致的 VSIX，并上传到对应的 GitHub Release：
+
+```text
+git push origin main
+git tag v0.0.2
+git push origin v0.0.2
+```
+
 ## 使用提示
 
-- 双击 Local branch 执行 Checkout；右键 Ref 或 Commit 打开上下文操作菜单。
+- 单击或双击 Local/Remote Branch 只展示该分支的 Commit 历史，不会 Checkout；需要切换分支时请使用 Local Branch 的右键菜单。
+- 选中一个 Commit 后，按住 Shift 单击另一个 Commit，或使用 Shift+上/下方向键扩展连续选区；右键选区可执行 `Drop commits…` 或 `Squash commits…`。
 - 单击 Changed File 查看路径、状态和增删摘要；双击或右键 `Show Diff` 使用 VS Code 原生 Diff Editor。
 - 在普通本地文件编辑器中右键打开 `Git Log`：无选区时查看当前行历史，有选区时查看选区历史，也可在独立 Tab 打开完整 File History；Branch/Tag 比较使用 VS Code 原生 Diff，因此自动继承 minimap、语法高亮、搜索和 Diff 快捷键。
 - `Ctrl/Cmd+F` 聚焦搜索，`Ctrl/Cmd+L` 聚焦 Commit Log，`Ctrl/Cmd+C` 复制选中 Commit 的完整 Hash；方向键、PageUp/PageDown、Home/End 可浏览提交。
