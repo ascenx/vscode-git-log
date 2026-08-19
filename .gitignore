@@ -5,4 +5,5 @@ coverage/
 *.vsix
 .DS_Store
 .vscode-test/
+.worktrees/
 *.log
