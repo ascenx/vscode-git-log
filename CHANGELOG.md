@@ -2,6 +2,24 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.0.3
+
+### Added
+
+- Added a dedicated Branch pane search that filters Local, Remote, and Tag references without querying the commit log.
+- Added recursive, collapsible folders for slash-delimited references, including remote names that contain `/`.
+
+### Changed
+
+- Moved commit-specific Text/Hash, Branch, User, Date, and Path filters into the Commit pane and placed global Git actions in the upper-right toolbar.
+- Unified pane toolbar and heading backgrounds, reduced outer spacing, and refined pane dividers while preserving wider resize hit targets.
+- Kept the Commit header aligned with its rows throughout horizontal scrolling.
+
+### Fixed
+
+- Hex-like text that does not resolve to a commit now falls back to full commit-message and author search instead of returning no results.
+- Fixed Changed Files transparency and overlap issues, and kept Branch, Commit, and Changed Files panes in their correct grid columns when sibling panes are collapsed.
+
 ## 0.0.2
 
 ### Added

@@ -2,10 +2,18 @@
   "name": "git-log",
   "displayName": "Git Log — Commit Graph & History",
   "description": "A visual Git log, commit graph, history browser, and repository operations extension for Visual Studio Code.",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "publisher": "ascenx",
   "license": "MIT",
   "icon": "media/git-log.png",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ascenx/vscode-git-log.git"
+  },
+  "homepage": "https://github.com/ascenx/vscode-git-log#readme",
+  "bugs": {
+    "url": "https://github.com/ascenx/vscode-git-log/issues"
+  },
   "private": true,
   "engines": {
     "vscode": "^1.85.0"

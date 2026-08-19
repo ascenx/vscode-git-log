@@ -2,7 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.2-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.3-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Open VSX Version](https://img.shields.io/open-vsx/v/ascenx/git-log?label=Open%20VSX)](https://open-vsx.org/extension/ascenx/git-log)
 
 A visual Git log, commit graph, history browser, and repository operations extension for Visual Studio Code.
 
@@ -51,7 +52,7 @@ code --install-extension ascenx.git-log
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Repository │ Text/hash │ Branch │ User │ Date │ Paths │ Refresh   │
+│ Ref filter │ Text/hash │ Branch │ User │ Date │ Paths │ Actions   │
 ├─────────────┬───────────────────────────────────┬───────────────────┤
 │ HEAD        │ Commit graph                      │ Changed files     │
 │ Local       │ ● fix: ...        main   Alice   │ src/              │
@@ -68,6 +69,7 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 
 - Multi-root repository discovery for standard repositories, bare repositories, linked worktrees, and detached HEAD states.
 - Synchronized Refs, Commit Graph, Changed Files, and Commit Details areas.
+- A dedicated Branch pane search and a recursive, collapsible reference tree that groups slash-delimited Local, Remote, and Tag names into folders. Remote names containing `/` remain distinct top-level folders.
 - A dedicated `Git Log` tab in the VS Code bottom Panel alongside Problems, Output, and Terminal. `Open Log` focuses this tab directly without opening an editor page or intermediate welcome view.
 - Paginated logs, bounded sliding windows, custom DAG lanes, graph continuation across windows, fixed-row virtual scrolling, and large-list performance benchmarks. Deep-page global offsets, selections, and relative scroll positions can be restored.
 - Combined Text/Hash, Branch, User, Date, and Path filters with cancellation and stale-response rejection. Repository refreshes do not overwrite an active search draft. Text queries scan the full message, author name, and email in canonical `git log --date-order` order while preserving child-before-parent topology.
@@ -106,17 +108,11 @@ Build a local VSIX with:
 npm run package
 ```
 
-Create the `v0.0.2` tag after committing and pushing the release changes. The GitHub Actions release workflow validates the repository, packages a version-matched VSIX, and uploads it to the corresponding GitHub Release:
-
-```text
-git push origin main
-git tag v0.0.2
-git push origin v0.0.2
-```
 
 ## Usage tips
 
 - Click or double-click a Local or Remote branch to display its commit history without checking it out. Use the Local branch context menu when you explicitly want to check it out.
+- Use the Branch pane search to filter references locally. Slash-delimited names are grouped into folders that can be expanded or collapsed independently.
 - Select a commit, then hold Shift while clicking another commit or pressing Up/Down to extend a contiguous range. Right-click the range to choose `Drop commits…` or `Squash commits…`.
 - Click a Changed File to inspect its path, status, and change summary. Double-click it or choose `Show Diff` to use the native VS Code Diff Editor.
 - Right-click a normal local file and open `Git Log`: with no selection it shows current-line history, with a selection it shows selection history, and it can also open complete File History in a dedicated tab. Branch/Tag comparison uses native VS Code diff capabilities, including minimap, syntax highlighting, search, and diff shortcuts.

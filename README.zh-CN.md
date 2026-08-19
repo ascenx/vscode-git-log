@@ -2,7 +2,8 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.2-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.3-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Open VSX Version](https://img.shields.io/open-vsx/v/ascenx/git-log?label=Open%20VSX)](https://open-vsx.org/extension/ascenx/git-log)
 
 一个面向 VS Code 的可视化 Git 日志、提交图谱、历史浏览和仓库操作扩展。
 
@@ -51,7 +52,7 @@ code --install-extension ascenx.git-log
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────┐
-│ Repository │ Text/hash │ Branch │ User │ Date │ Paths │ Refresh   │
+│ Ref filter │ Text/hash │ Branch │ User │ Date │ Paths │ Actions   │
 ├─────────────┬───────────────────────────────────┬───────────────────┤
 │ HEAD        │ Commit graph                      │ Changed files     │
 │ Local       │ ● fix: ...        main   Alice   │ src/              │
@@ -68,6 +69,7 @@ code --install-extension ascenx.git-log
 
 - 多根工作区仓库发现，支持普通仓库、bare repository、linked worktree 和 detached HEAD。
 - Refs / Commit Graph / Changed Files / Commit Details 四区联动。
+- Branch 区域提供独立搜索，并将名称中带 `/` 的 Local、Remote、Tag 引用递归分组为可展开/收起的文件夹；本身包含 `/` 的 Remote 名称仍作为独立的顶层文件夹。
 - Git Log 作为 VS Code 底部 Panel 的独立 Tab 展示，与问题、输出、终端等工具窗口并列；点击 `Open Log` 会直接聚焦该 Tab，不再打开编辑器页或经过中间欢迎页。
 - 分页日志、有界滑动窗口、自定义 DAG lane、跨窗口 graph continuation、固定行高虚拟滚动和大列表性能基准；深分页的全局 offset、选择和相对滚动位置可恢复。
 - Text/Hash、Branch、User、Date、Path 组合过滤，旧查询取消和过期响应拒绝；仓库状态刷新不会覆盖正在编辑的搜索草稿；文本查询按 canonical `git log --date-order` 顺序扫描完整正文、作者姓名与邮箱，保留 child-before-parent 拓扑。
@@ -106,17 +108,11 @@ npm run build
 npm run package
 ```
 
-提交并推送发布改动后创建 `v0.0.2` Tag。GitHub Actions 会自动校验仓库、打包版本一致的 VSIX，并上传到对应的 GitHub Release：
-
-```text
-git push origin main
-git tag v0.0.2
-git push origin v0.0.2
-```
 
 ## 使用提示
 
 - 单击或双击 Local/Remote Branch 只展示该分支的 Commit 历史，不会 Checkout；需要切换分支时请使用 Local Branch 的右键菜单。
+- 使用 Branch 区域搜索框可在本地过滤引用；名称中带 `/` 的引用会按文件夹分组，各层级可独立展开或收起。
 - 选中一个 Commit 后，按住 Shift 单击另一个 Commit，或使用 Shift+上/下方向键扩展连续选区；右键选区可执行 `Drop commits…` 或 `Squash commits…`。
 - 单击 Changed File 查看路径、状态和增删摘要；双击或右键 `Show Diff` 使用 VS Code 原生 Diff Editor。
 - 在普通本地文件编辑器中右键打开 `Git Log`：无选区时查看当前行历史，有选区时查看选区历史，也可在独立 Tab 打开完整 File History；Branch/Tag 比较使用 VS Code 原生 Diff，因此自动继承 minimap、语法高亮、搜索和 Diff 快捷键。
