@@ -242,6 +242,7 @@ describe('WorkbenchApp', () => {
     });
     fireEvent.contextMenu(middleRow);
     const menu = screen.getByRole('menu', { name: 'commit actions' });
+    expect(within(menu).queryByRole('menuitem', { name: 'Checkout Revision' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'Drop commits…' })).toBeEnabled();
     expect(within(menu).getByRole('menuitem', { name: 'Squash commits…' })).toBeEnabled();
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Drop commits…' }));
@@ -3770,7 +3771,14 @@ describe('WorkbenchApp', () => {
       text: childHash,
     });
     fireEvent.contextMenu(childRow);
-    expect(screen.getByRole('menuitem', { name: 'Show Details' })).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Show Details' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Checkout Revision' }));
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'runOperation',
+      repositoryId: 'repo-details',
+      operation: { kind: 'checkout', ref: childHash },
+    });
+    fireEvent.contextMenu(childRow);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Compare with Parent' }));
     fireEvent.contextMenu(childRow);
     fireEvent.click(screen.getByRole('menuitem', { name: 'Copy Hash' }));
@@ -3793,6 +3801,11 @@ describe('WorkbenchApp', () => {
           hash: childHash,
           mode: 'parent',
           parent: parentHash,
+        }),
+        expect.objectContaining({
+          type: 'runOperation',
+          repositoryId: 'repo-details',
+          operation: { kind: 'checkout', ref: childHash },
         }),
         expect.objectContaining({ type: 'copyToClipboard', text: childHash }),
         expect.objectContaining({

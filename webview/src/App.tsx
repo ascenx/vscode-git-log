@@ -703,7 +703,6 @@ export function App() {
       logHeaderRef.current.style.transform = `translateX(${-scrollLeft}px)`;
     }
   }, []);
-  const detailsRef = useRef<HTMLElement>(null);
   const selectedRepositoryIdRef = useRef<string | undefined>(undefined);
   const latestRepositorySelectionRequest = useRef<string | undefined>(undefined);
   const latestRequestByScope = useRef<Partial<Record<WorkbenchRequestScope, string>>>({});
@@ -2887,7 +2886,6 @@ export function App() {
       />
 
       <section
-        ref={detailsRef}
         className="details-pane pane"
         role="region"
         aria-label="Commit details"
@@ -3133,17 +3131,6 @@ export function App() {
               <button
                 type="button"
                 role="menuitem"
-                onClick={() => {
-                  selectHash(contextMenu.commit.hash, 'details');
-                  setContextMenu(undefined);
-                  detailsRef.current?.focus();
-                }}
-              >
-                Show Details
-              </button>
-              <button
-                type="button"
-                role="menuitem"
                 disabled={!contextMenu.commit.parents[0]}
                 title={contextMenu.commit.parents[0] ? 'Open all changed text files' : 'Root commit has no parent'}
                 onClick={() =>
@@ -3167,6 +3154,22 @@ export function App() {
               </button>
               {!selectedRepository?.isBare && !selectedRepository?.operationState ? (
                 <>
+              {contextMenu.commits.length === 1 ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={selectedOperationInFlight}
+                  title="Check out this commit in detached HEAD state"
+                  onClick={() =>
+                    runOperation(
+                      { kind: 'checkout', ref: contextMenu.commit.hash },
+                      contextMenu.repositoryId,
+                    )
+                  }
+                >
+                  Checkout Revision
+                </button>
+              ) : null}
               <button
                 type="button"
                 role="menuitem"
@@ -3330,7 +3333,7 @@ export function App() {
                 title={
                   state.details?.hash === contextMenu.commit.hash
                     ? 'Copy the complete commit message'
-                    : 'Show Details first to load the full message'
+                    : 'Select the commit first to load the full message'
                 }
                 onClick={() =>
                   send({
