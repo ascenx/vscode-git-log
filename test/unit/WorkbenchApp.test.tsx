@@ -52,10 +52,42 @@ function completeLatestOperation(): void {
   });
 }
 
-function initializeCommitRangeFixture(): { newest: string; middle: string; oldest: string } {
+function initializeCommitRangeFixture() {
   const newest = 'c'.repeat(40);
   const middle = 'b'.repeat(40);
   const oldest = 'a'.repeat(40);
+  const commits = [
+    {
+      hash: newest,
+      parents: [middle],
+      subject: 'newest commit',
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 3,
+      commitTime: 3,
+      refs: [],
+    },
+    {
+      hash: middle,
+      parents: [oldest],
+      subject: 'middle commit',
+      authorName: 'Bob',
+      authorEmail: 'bob@example.com',
+      authorTime: 2,
+      commitTime: 2,
+      refs: [],
+    },
+    {
+      hash: oldest,
+      parents: ['d'.repeat(40)],
+      subject: 'oldest commit',
+      authorName: 'Carol',
+      authorEmail: 'carol@example.com',
+      authorTime: 1,
+      commitTime: 1,
+      refs: [],
+    },
+  ];
   render(<App />);
   act(() => {
     window.dispatchEvent(
@@ -93,38 +125,7 @@ function initializeCommitRangeFixture(): { newest: string; middle: string; oldes
           requestId: 'ready-commit-range',
           repositoryId: 'repo-commit-range',
           refs: [],
-          commits: [
-            {
-              hash: newest,
-              parents: [middle],
-              subject: 'newest commit',
-              authorName: 'Alice',
-              authorEmail: 'alice@example.com',
-              authorTime: 3,
-              commitTime: 3,
-              refs: [],
-            },
-            {
-              hash: middle,
-              parents: [oldest],
-              subject: 'middle commit',
-              authorName: 'Bob',
-              authorEmail: 'bob@example.com',
-              authorTime: 2,
-              commitTime: 2,
-              refs: [],
-            },
-            {
-              hash: oldest,
-              parents: ['d'.repeat(40)],
-              subject: 'oldest commit',
-              authorName: 'Carol',
-              authorEmail: 'carol@example.com',
-              authorTime: 1,
-              commitTime: 1,
-              refs: [],
-            },
-          ],
+          commits,
           filters: { text: '', branches: [], authors: [], paths: [] },
           replace: true,
           hasMore: false,
@@ -133,7 +134,7 @@ function initializeCommitRangeFixture(): { newest: string; middle: string; oldes
     );
   });
   postedMessages.length = 0;
-  return { newest, middle, oldest };
+  return { newest, middle, oldest, commits };
 }
 
 describe('WorkbenchApp', () => {
@@ -318,6 +319,62 @@ describe('WorkbenchApp', () => {
     for (const row of [newestRow, middleRow, oldestRow]) {
       expect(row).toHaveAttribute('aria-selected', 'true');
     }
+  });
+
+  it('toggles non-contiguous commits with Ctrl or Cmd and hides range rewrite actions', () => {
+    const { newest, oldest, commits } = initializeCommitRangeFixture();
+    const newestRow = screen.getByText('newest commit').closest('[role="row"]') as HTMLElement;
+    const middleRow = screen.getByText('middle commit').closest('[role="row"]') as HTMLElement;
+    const oldestRow = screen.getByText('oldest commit').closest('[role="row"]') as HTMLElement;
+
+    fireEvent.click(newestRow);
+    fireEvent.click(oldestRow, { ctrlKey: true });
+
+    expect(newestRow).toHaveAttribute('aria-selected', 'true');
+    expect(middleRow).toHaveAttribute('aria-selected', 'false');
+    expect(oldestRow).toHaveAttribute('aria-selected', 'true');
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'selectCommit',
+      hash: oldest,
+      hashes: [newest, oldest],
+    });
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'refresh-non-contiguous-selection',
+            repositoryId: 'repo-commit-range',
+            refs: [],
+            commits,
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            selectedHash: oldest,
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    expect(newestRow).toHaveAttribute('aria-selected', 'true');
+    expect(middleRow).toHaveAttribute('aria-selected', 'false');
+    expect(oldestRow).toHaveAttribute('aria-selected', 'true');
+
+    fireEvent.contextMenu(newestRow);
+    const menu = screen.getByRole('menu', { name: 'commit actions' });
+    expect(within(menu).queryByRole('menuitem', { name: 'Drop commits…' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Squash commits…' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Checkout Revision' })).not.toBeInTheDocument();
+
+    fireEvent.pointerDown(screen.getByRole('grid', { name: 'Commit log' }));
+    fireEvent.click(oldestRow, { metaKey: true });
+    expect(newestRow).toHaveAttribute('aria-selected', 'true');
+    expect(oldestRow).toHaveAttribute('aria-selected', 'false');
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'selectCommit',
+      hash: newest,
+      hashes: [newest],
+    });
   });
 
   it('preserves a valid commit range selection across repository refreshes', () => {

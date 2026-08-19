@@ -213,7 +213,7 @@ interface CommitListProps {
   horizontalScrollResetKey: string;
   onScrollTopChange(scrollTop: number): void;
   onHorizontalScroll(scrollLeft: number): void;
-  onSelect(commit: CommitSummary, extend: boolean): void;
+  onSelect(commit: CommitSummary, extend: boolean, toggle?: boolean): void;
   onContextMenu(commit: CommitSummary, x: number, y: number): void;
   onLoadMore(): void;
 }
@@ -326,7 +326,9 @@ function CommitList({
               data-commit-hash={commit.hash}
               tabIndex={0}
               key={commit.hash}
-              onClick={(event) => onSelect(commit, event.shiftKey)}
+              onClick={(event) =>
+                onSelect(commit, event.shiftKey, event.ctrlKey || event.metaKey)
+              }
               onContextMenu={(event) => {
                 event.preventDefault();
                 onContextMenu(commit, event.clientX, event.clientY);
@@ -776,6 +778,15 @@ export function App() {
     () => new Set(selectedCommitHashes),
     [selectedCommitHashes],
   );
+  const hasContiguousCommitRange =
+    contextMenu?.kind === 'commit' &&
+    contextMenu.commits.length >= 2 &&
+    contextMenu.commits.every((commit, index) => {
+      const firstIndex = state.commits.findIndex(
+        (candidate) => candidate.hash === contextMenu.commits[0]?.hash,
+      );
+      return firstIndex >= 0 && state.commits[firstIndex + index]?.hash === commit.hash;
+    });
   const selectedOperationInFlight = state.selectedRepositoryId
     ? state.operationRepositoryIds.has(state.selectedRepositoryId)
     : false;
@@ -1012,13 +1023,11 @@ export function App() {
               const selectedIndexes = current.map((hash) =>
                 message.commits.findIndex((commit) => commit.hash === hash),
               );
-              const firstIndex = selectedIndexes[0] ?? -1;
-              const keepsRange =
+              const keepsSelection =
                 current.length > 1 &&
-                selectedIndexes.every(
-                  (index, position) => index >= 0 && index === firstIndex + position,
-                );
-              if (keepsRange) {
+                current.includes(selectedHash) &&
+                selectedIndexes.every((index) => index >= 0);
+              if (keepsSelection) {
                 return current;
               }
               commitSelectionAnchor.current = selectedHash;
@@ -1446,7 +1455,7 @@ export function App() {
     send({ type: 'selectRepository', requestId: selectionRequestId, repositoryId });
   };
 
-  const selectCommit = (commit: CommitSummary, extend = false): void => {
+  const selectCommit = (commit: CommitSummary, extend = false, toggle = false): void => {
     if (state.history) {
       const rememberedParent = historyParentChoices.current.get(commit.hash);
       if (commit.parents.length > 1 && !rememberedParent) {
@@ -1469,7 +1478,29 @@ export function App() {
     }
     if (!state.selectedRepositoryId) return;
     let nextSelectedCommitHashes: string[];
-    if (extend && commitSelectionAnchor.current) {
+    let focusedCommit = commit;
+    if (toggle) {
+      const nextSelection = new Set(selectedCommitHashes);
+      if (nextSelection.has(commit.hash)) {
+        if (nextSelection.size === 1) return;
+        nextSelection.delete(commit.hash);
+        nextSelectedCommitHashes = state.commits
+          .filter((candidate) => nextSelection.has(candidate.hash))
+          .map((candidate) => candidate.hash);
+        const focusedHash =
+          state.selectedHash && nextSelection.has(state.selectedHash)
+            ? state.selectedHash
+            : nextSelectedCommitHashes[0];
+        focusedCommit =
+          state.commits.find((candidate) => candidate.hash === focusedHash) ?? commit;
+      } else {
+        nextSelection.add(commit.hash);
+        nextSelectedCommitHashes = state.commits
+          .filter((candidate) => nextSelection.has(candidate.hash))
+          .map((candidate) => candidate.hash);
+      }
+      commitSelectionAnchor.current = focusedCommit.hash;
+    } else if (extend && commitSelectionAnchor.current) {
       const anchorIndex = state.commits.findIndex(
         (candidate) => candidate.hash === commitSelectionAnchor.current,
       );
@@ -1493,11 +1524,11 @@ export function App() {
     activeSelectionRequest.current = {
       requestId: selectionRequestId,
       repositoryId: state.selectedRepositoryId,
-      hash: commit.hash,
+      hash: focusedCommit.hash,
     };
     setState((current) => ({
       ...current,
-      selectedHash: commit.hash,
+      selectedHash: focusedCommit.hash,
       details: undefined,
       detailsRepositoryId: undefined,
       selectedParent: undefined,
@@ -1508,7 +1539,7 @@ export function App() {
       type: 'selectCommit',
       requestId: selectionRequestId,
       repositoryId: state.selectedRepositoryId,
-      hash: commit.hash,
+      hash: focusedCommit.hash,
       hashes: nextSelectedCommitHashes,
     });
   };
@@ -3062,7 +3093,7 @@ export function App() {
           ) : null}
           {contextMenu.kind === 'commit' ? (
             <>
-              {contextMenu.commits.length >= 2 &&
+              {hasContiguousCommitRange &&
               !selectedRepository?.isBare &&
               !selectedRepository?.operationState ? (
                 <>
