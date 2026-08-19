@@ -2,6 +2,23 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.0.4
+
+### Added
+
+- Added Ctrl/Cmd+click for non-contiguous commit selection while keeping Shift+click and Shift+Arrow keys for contiguous ranges.
+- Added `Checkout Revision` to the single-commit context menu for checking out a commit in detached HEAD state.
+
+### Changed
+
+- Changed Files now combines the changed files from every selected commit and opens each file against the commit and parent that produced it.
+- `Drop commits…` and `Squash commits…` remain available only for contiguous multi-commit selections, while `Checkout Revision` remains a single-commit action.
+- Removed the redundant `Show Details` commit-menu action because selecting a commit already loads its details.
+
+### Fixed
+
+- Preserved valid contiguous and non-contiguous commit selections across repository refreshes.
+
 ## 0.0.3
 
 ### Added

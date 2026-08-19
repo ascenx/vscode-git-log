@@ -165,3 +165,78 @@ jobs:
             echo "$RELEASE_LOOKUP" >&2
             exit "$RELEASE_STATUS"
           fi
+
+  publish-vscode-marketplace:
+    name: Publish VS Code Marketplace
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download packaged VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix-${{ github.sha }}
+          path: release-artifact
+
+      - name: Locate VSIX
+        id: vsix
+        shell: bash
+        run: |
+          mapfile -t VSIX_FILES < <(find release-artifact -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#VSIX_FILES[@]}" -ne 1 ]]; then
+            echo "Expected exactly one downloaded VSIX, found ${#VSIX_FILES[@]}." >&2
+            exit 1
+          fi
+          echo "path=${VSIX_FILES[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to VS Code Marketplace
+        env:
+          VSCE_PAT: ${{ secrets.VSCE_PAT }}
+        run: >-
+          npx --yes @vscode/vsce@3.9.2 publish
+          --packagePath "${{ steps.vsix.outputs.path }}"
+          --skip-duplicate
+
+  publish-open-vsx:
+    name: Publish Open VSX
+    needs: build
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+
+    steps:
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Download packaged VSIX
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix-${{ github.sha }}
+          path: release-artifact
+
+      - name: Locate VSIX
+        id: vsix
+        shell: bash
+        run: |
+          mapfile -t VSIX_FILES < <(find release-artifact -maxdepth 1 -type f -name '*.vsix' -print)
+          if [[ "${#VSIX_FILES[@]}" -ne 1 ]]; then
+            echo "Expected exactly one downloaded VSIX, found ${#VSIX_FILES[@]}." >&2
+            exit 1
+          fi
+          echo "path=${VSIX_FILES[0]}" >> "$GITHUB_OUTPUT"
+
+      - name: Publish to Open VSX
+        env:
+          OVSX_PAT: ${{ secrets.OVSX_PAT }}
+        run: npx --yes ovsx@1.1.1 publish "${{ steps.vsix.outputs.path }}"
