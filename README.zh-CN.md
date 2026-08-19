@@ -2,7 +2,7 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-[![Visual Studio Marketplace Version](https://img.shields.io/badge/Marketplace-v0.0.3-007ACC?logo=visualstudiocode&logoColor=white)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
+[![Visual Studio Marketplace Version](https://vsmarketplacebadges.dev/version-short/ascenx.git-log.svg?label=Marketplace&color=007ACC)](https://marketplace.visualstudio.com/items?itemName=ascenx.git-log)
 [![Open VSX Version](https://img.shields.io/open-vsx/v/ascenx/git-log?label=Open%20VSX)](https://open-vsx.org/extension/ascenx/git-log)
 
 一个面向 VS Code 的可视化 Git 日志、提交图谱、历史浏览和仓库操作扩展。
