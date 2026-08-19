@@ -58,6 +58,8 @@ export interface ChangedFile {
   additions?: number;
   deletions?: number;
   binary: boolean;
+  commitHash?: CommitHash;
+  parentHash?: CommitHash;
 }
 
 export interface HistoryEntry extends CommitSummary {

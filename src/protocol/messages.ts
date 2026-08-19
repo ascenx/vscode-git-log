@@ -58,7 +58,13 @@ export interface PersistedWorkbenchState {
 export type WebviewToExtensionMessage =
   | { type: 'ready'; requestId: string }
   | { type: 'selectRepository'; requestId: string; repositoryId: string }
-  | { type: 'selectCommit'; requestId: string; repositoryId: string; hash: string }
+  | {
+      type: 'selectCommit';
+      requestId: string;
+      repositoryId: string;
+      hash: string;
+      hashes?: string[];
+    }
   | {
       type: 'requestCommitMessages';
       requestId: string;
@@ -264,6 +270,17 @@ function isCommitRange(value: unknown): value is string[] {
     value.length <= MAX_COMMIT_RANGE &&
     value.every(isHash) &&
     new Set(value).size === value.length
+  );
+}
+
+function isCommitSelection(value: unknown, selectedHash: string): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length >= 1 &&
+    value.length <= MAX_COMMIT_RANGE &&
+    value.every(isHash) &&
+    new Set(value).size === value.length &&
+    value.includes(selectedHash)
   );
 }
 
@@ -482,12 +499,15 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
         ? { type: value.type, requestId: value.requestId, repositoryId: value.repositoryId }
         : undefined;
     case 'selectCommit':
-      return hasRepository(value) && isHash(value.hash)
+      return hasRepository(value) &&
+        isHash(value.hash) &&
+        (value.hashes === undefined || isCommitSelection(value.hashes, value.hash))
         ? {
             type: value.type,
             requestId: value.requestId,
             repositoryId: value.repositoryId,
             hash: value.hash,
+            ...(Array.isArray(value.hashes) ? { hashes: value.hashes } : {}),
           }
         : undefined;
     case 'requestCommitMessages':

@@ -189,6 +189,57 @@ describe('WorkbenchApp', () => {
     for (const row of [newestRow, middleRow, oldestRow]) {
       expect(row).toHaveAttribute('aria-selected', 'true');
     }
+    const selectionRequest = postedMessages.at(-1);
+    expect(selectionRequest).toMatchObject({
+      type: 'selectCommit',
+      repositoryId: 'repo-commit-range',
+      hash: oldest,
+      hashes: [newest, middle, oldest],
+    });
+    if (!selectionRequest || selectionRequest.type !== 'selectCommit') return;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'selectionDetailsLoaded',
+            requestId: selectionRequest.requestId,
+            repositoryId: 'repo-commit-range',
+            details: {
+              hash: oldest,
+              parents: ['d'.repeat(40)],
+              subject: 'oldest commit',
+              body: 'oldest commit\n',
+              authorName: 'Carol',
+              authorEmail: 'carol@example.com',
+              authorTime: 1,
+              commitTime: 1,
+              committerName: 'Carol',
+              committerEmail: 'carol@example.com',
+              refs: [],
+              signature: 'none',
+            },
+            files: [
+              {
+                status: 'A',
+                path: 'newer.txt',
+                additions: 1,
+                deletions: 0,
+                binary: false,
+                commitHash: newest,
+                parentHash: middle,
+              },
+            ],
+          },
+        }),
+      );
+    });
+    fireEvent.doubleClick(screen.getByText('newer.txt'));
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'openDiff',
+      hash: newest,
+      parent: middle,
+      path: 'newer.txt',
+    });
     fireEvent.contextMenu(middleRow);
     const menu = screen.getByRole('menu', { name: 'commit actions' });
     expect(within(menu).getByRole('menuitem', { name: 'Drop commits…' })).toBeEnabled();

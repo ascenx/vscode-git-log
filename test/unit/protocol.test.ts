@@ -14,6 +14,24 @@ describe('parseWebviewMessage', () => {
 
     expect(
       parseWebviewMessage({
+        type: 'selectCommit',
+        requestId: 'select-commit-range',
+        repositoryId: 'repository-1',
+        hash: hashes[1],
+        hashes,
+      }),
+    ).toMatchObject({ type: 'selectCommit', hash: hashes[1], hashes });
+    expect(
+      parseWebviewMessage({
+        type: 'selectCommit',
+        requestId: 'select-commit-range',
+        repositoryId: 'repository-1',
+        hash: 'c'.repeat(40),
+        hashes,
+      }),
+    ).toBeUndefined();
+    expect(
+      parseWebviewMessage({
         type: 'requestCommitMessages',
         requestId: 'commit-messages',
         repositoryId: 'repository-1',

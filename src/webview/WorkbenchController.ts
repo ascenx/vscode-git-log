@@ -68,11 +68,39 @@ export interface WorkbenchControllerOptions {
   ): Promise<void>;
 }
 
+function mergeSelectedCommitFiles(files: readonly ChangedFile[]): ChangedFile[] {
+  const merged = new Map<string, ChangedFile>();
+  for (const file of files) {
+    const key = `${file.oldPath ?? ''}\0${file.path}`;
+    const existing = merged.get(key);
+    if (!existing) {
+      merged.set(key, file);
+      continue;
+    }
+    const additions =
+      existing.additions === undefined && file.additions === undefined
+        ? undefined
+        : (existing.additions ?? 0) + (file.additions ?? 0);
+    const deletions =
+      existing.deletions === undefined && file.deletions === undefined
+        ? undefined
+        : (existing.deletions ?? 0) + (file.deletions ?? 0);
+    merged.set(key, {
+      ...existing,
+      ...(additions === undefined ? {} : { additions }),
+      ...(deletions === undefined ? {} : { deletions }),
+      binary: existing.binary || file.binary,
+    });
+  }
+  return [...merged.values()];
+}
+
 export class WorkbenchController {
   private repositories = new Map<string, RepositorySummary>();
   private refs = new Map<string, RefLabel[]>();
   private filters = new Map<string, LogFilters>();
   private selectedCommits = new Map<string, string>();
+  private selectedCommitRanges = new Map<string, string[]>();
   private scrollTops = new Map<string, number>();
   private logOffsets = new Map<string, number>();
   private graphContinuations = new Map<string, GraphContinuationState>();
@@ -100,7 +128,10 @@ export class WorkbenchController {
     this.selectedRepositoryId = options.initialState?.selectedRepositoryId;
     for (const [repositoryId, state] of Object.entries(options.initialState?.repositories ?? {})) {
       this.filters.set(repositoryId, state.filters);
-      if (state.selectedHash) this.selectedCommits.set(repositoryId, state.selectedHash);
+      if (state.selectedHash) {
+        this.selectedCommits.set(repositoryId, state.selectedHash);
+        this.selectedCommitRanges.set(repositoryId, [state.selectedHash]);
+      }
       if (state.scrollTop !== undefined) this.scrollTops.set(repositoryId, state.scrollTop);
       if (state.logOffset !== undefined) this.logOffsets.set(repositoryId, state.logOffset);
       if (state.graphContinuation) {
@@ -192,8 +223,18 @@ export class WorkbenchController {
         case 'selectCommit':
           this.requireSelectedRepository(message.repositoryId);
           this.selectedCommits.set(message.repositoryId, message.hash);
+          this.selectedCommitRanges.set(
+            message.repositoryId,
+            message.hashes ?? [message.hash],
+          );
           await this.persistWorkbenchState();
-          await this.loadSelection(message.repositoryId, message.hash, message.requestId);
+          await this.loadSelection(
+            message.repositoryId,
+            message.hash,
+            message.requestId,
+            undefined,
+            message.hashes ?? [message.hash],
+          );
           break;
         case 'requestCommitMessages': {
           this.requireSelectedRepository(message.repositoryId);
@@ -223,6 +264,7 @@ export class WorkbenchController {
             message.hash,
             message.requestId,
             message.parent,
+            this.selectedCommitRanges.get(message.repositoryId) ?? [message.hash],
           );
           break;
         case 'requestLogPage':
@@ -703,8 +745,13 @@ export class WorkbenchController {
         this.scrollTops.set(effectiveRepositoryId, 0);
         this.logOffsets.set(effectiveRepositoryId, 0);
         this.graphContinuations.delete(effectiveRepositoryId);
-        if (inspected.head) this.selectedCommits.set(effectiveRepositoryId, inspected.head);
-        else this.selectedCommits.delete(effectiveRepositoryId);
+        if (inspected.head) {
+          this.selectedCommits.set(effectiveRepositoryId, inspected.head);
+          this.selectedCommitRanges.set(effectiveRepositoryId, [inspected.head]);
+        } else {
+          this.selectedCommits.delete(effectiveRepositoryId);
+          this.selectedCommitRanges.delete(effectiveRepositoryId);
+        }
         await this.persistWorkbenchState();
       }
       await this.options.postMessage({
@@ -790,6 +837,18 @@ export class WorkbenchController {
       selectedHash && commits.some((commit) => commit.hash === selectedHash)
         ? selectedHash
         : undefined;
+    const rememberedSelection = this.selectedCommitRanges.get(repositoryId) ?? [];
+    const restoredSelectedHashes =
+      restoredSelectedHash &&
+      rememberedSelection.length > 0 &&
+      rememberedSelection.every((hash) => commits.some((commit) => commit.hash === hash))
+        ? rememberedSelection
+        : restoredSelectedHash
+          ? [restoredSelectedHash]
+          : [];
+    if (restoredSelectedHash) {
+      this.selectedCommitRanges.set(repositoryId, [...restoredSelectedHashes]);
+    }
     const restoredGraphContinuation = this.graphContinuations.get(repositoryId);
     await this.options.postMessage({
       type: 'repositoryData',
@@ -813,7 +872,13 @@ export class WorkbenchController {
     });
 
     if (replace && restoredSelectedHash && !abortController.signal.aborted) {
-      await this.loadSelection(repositoryId, restoredSelectedHash, requestId);
+      await this.loadSelection(
+        repositoryId,
+        restoredSelectedHash,
+        requestId,
+        undefined,
+        restoredSelectedHashes,
+      );
     }
   }
 
@@ -822,6 +887,7 @@ export class WorkbenchController {
     hash: string,
     requestId: string,
     selectedParent?: string,
+    selectedHashes: readonly string[] = [hash],
   ): Promise<void> {
     const repository = this.requireRepository(repositoryId);
     this.selectionAbortController?.abort();
@@ -835,16 +901,43 @@ export class WorkbenchController {
       this.refs.get(repositoryId) ?? [],
       abortController.signal,
     );
-    const files = await this.options.gitService.getChangedFiles(
-      fileURLToPath(repository.rootUri),
-      hash,
-      selectedParent ?? details.parents[0],
-      abortController.signal,
-    );
+    const cwd = fileURLToPath(repository.rootUri);
+    const selectedFiles: ChangedFile[] = [];
+    for (const selectedHash of selectedHashes) {
+      if (abortController.signal.aborted) return;
+      const selectedDetails =
+        selectedHash === hash
+          ? details
+          : await this.options.gitService.getCommitDetails(
+              cwd,
+              selectedHash,
+              this.refs.get(repositoryId) ?? [],
+              abortController.signal,
+            );
+      const parent = selectedHash === hash
+        ? selectedParent ?? selectedDetails.parents[0]
+        : selectedDetails.parents[0];
+      const files = await this.options.gitService.getChangedFiles(
+        cwd,
+        selectedHash,
+        parent,
+        abortController.signal,
+      );
+      selectedFiles.push(
+        ...files.map((file) => ({
+          ...file,
+          commitHash: selectedHash,
+          ...(parent ? { parentHash: parent } : {}),
+        })),
+      );
+    }
+    const files = mergeSelectedCommitFiles(selectedFiles);
     if (abortController.signal.aborted) return;
     if (
       repositoryId !== this.selectedRepositoryId ||
-      this.selectedCommits.get(repositoryId) !== hash
+      this.selectedCommits.get(repositoryId) !== hash ||
+      (this.selectedCommitRanges.get(repositoryId) ?? [hash]).join('\0') !==
+        selectedHashes.join('\0')
     ) {
       return;
     }

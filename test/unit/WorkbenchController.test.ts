@@ -47,6 +47,90 @@ async function createRepository(): Promise<string> {
 }
 
 describe('WorkbenchController', () => {
+  it('loads the changed files from every selected commit', async () => {
+    const repository = await createRepository();
+    const commitEnvironment = {
+      ...process.env,
+      GIT_AUTHOR_NAME: 'Alice',
+      GIT_AUTHOR_EMAIL: 'alice@example.com',
+      GIT_COMMITTER_NAME: 'Alice',
+      GIT_COMMITTER_EMAIL: 'alice@example.com',
+    };
+    await writeFile(join(repository, 'older.txt'), 'older\n');
+    await execFileAsync('git', ['add', 'older.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'older selected commit'], {
+      cwd: repository,
+      env: commitEnvironment,
+    });
+    await writeFile(join(repository, 'newer.txt'), 'newer\n');
+    await execFileAsync('git', ['add', 'newer.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'newer selected commit'], {
+      cwd: repository,
+      env: commitEnvironment,
+    });
+    const hashes = (
+      await execFileAsync('git', ['log', '--format=%H', '-2'], { cwd: repository })
+    ).stdout.trim().split('\n');
+    const messages: ExtensionToWebviewMessage[] = [];
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-selected-files' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+
+    await controller.handleMessage({
+      type: 'selectCommit',
+      requestId: 'selected-files',
+      repositoryId: initialized.selectedRepositoryId,
+      hash: hashes[1] ?? '',
+      hashes,
+    });
+
+    const selection = messages.filter((message) => message.type === 'selectionDetailsLoaded').at(-1);
+    expect(selection).toMatchObject({
+      type: 'selectionDetailsLoaded',
+      requestId: 'selected-files',
+      files: expect.arrayContaining([
+        expect.objectContaining({ path: 'older.txt', commitHash: hashes[1] }),
+        expect.objectContaining({ path: 'newer.txt', commitHash: hashes[0] }),
+      ]),
+    });
+
+    messages.length = 0;
+    await controller.handleMessage({
+      type: 'refresh',
+      requestId: 'refresh-selected-files',
+      repositoryId: initialized.selectedRepositoryId,
+    });
+    expect(messages.filter((message) => message.type === 'selectionDetailsLoaded').at(-1)).toMatchObject({
+      type: 'selectionDetailsLoaded',
+      requestId: 'refresh-selected-files',
+      files: expect.arrayContaining([
+        expect.objectContaining({ path: 'older.txt' }),
+        expect.objectContaining({ path: 'newer.txt' }),
+      ]),
+    });
+  });
+
   it('loads complete commit messages in the requested top-to-bottom order', async () => {
     const repository = await createRepository();
     await writeFile(join(repository, 'app.txt'), 'second\n');

@@ -1469,6 +1469,7 @@ export function App() {
       return;
     }
     if (!state.selectedRepositoryId) return;
+    let nextSelectedCommitHashes: string[];
     if (extend && commitSelectionAnchor.current) {
       const anchorIndex = state.commits.findIndex(
         (candidate) => candidate.hash === commitSelectionAnchor.current,
@@ -1477,15 +1478,18 @@ export function App() {
       if (anchorIndex >= 0 && targetIndex >= 0) {
         const start = Math.min(anchorIndex, targetIndex);
         const end = Math.max(anchorIndex, targetIndex);
-        setSelectedCommitHashes(state.commits.slice(start, end + 1).map((candidate) => candidate.hash));
+        nextSelectedCommitHashes = state.commits
+          .slice(start, end + 1)
+          .map((candidate) => candidate.hash);
       } else {
         commitSelectionAnchor.current = commit.hash;
-        setSelectedCommitHashes([commit.hash]);
+        nextSelectedCommitHashes = [commit.hash];
       }
     } else {
       commitSelectionAnchor.current = commit.hash;
-      setSelectedCommitHashes([commit.hash]);
+      nextSelectedCommitHashes = [commit.hash];
     }
+    setSelectedCommitHashes(nextSelectedCommitHashes);
     const selectionRequestId = requestId('selection');
     activeSelectionRequest.current = {
       requestId: selectionRequestId,
@@ -1506,6 +1510,7 @@ export function App() {
       requestId: selectionRequestId,
       repositoryId: state.selectedRepositoryId,
       hash: commit.hash,
+      hashes: nextSelectedCommitHashes,
     });
   };
 
@@ -1781,12 +1786,13 @@ export function App() {
       }));
       return;
     }
+    const parent = file.parentHash ?? state.selectedParent;
     send({
       type: 'openDiff',
       requestId: requestId('diff'),
       repositoryId: state.detailsRepositoryId,
-      hash: state.details.hash,
-      ...(state.selectedParent ? { parent: state.selectedParent } : {}),
+      hash: file.commitHash ?? state.details.hash,
+      ...(parent ? { parent } : {}),
       path: file.path,
       ...(file.oldPath ? { oldPath: file.oldPath } : {}),
       status: file.status,
@@ -1801,12 +1807,13 @@ export function App() {
     ) {
       return;
     }
+    const parent = file.parentHash ?? state.selectedParent;
     send({
       type: 'openFile',
       requestId: requestId(`open-file-${mode}`),
       repositoryId: state.detailsRepositoryId,
-      hash: state.details.hash,
-      ...(state.selectedParent ? { parent: state.selectedParent } : {}),
+      hash: file.commitHash ?? state.details.hash,
+      ...(parent ? { parent } : {}),
       path: file.path,
       ...(file.oldPath ? { oldPath: file.oldPath } : {}),
       status: file.status,
