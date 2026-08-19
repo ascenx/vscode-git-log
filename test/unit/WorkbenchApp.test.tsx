@@ -1363,6 +1363,7 @@ describe('WorkbenchApp', () => {
         ahead: 1,
         behind: 0,
         isCurrent: false,
+        upstream: 'origin/feature/assets-fix',
       },
     ];
     act(() => {
@@ -1423,6 +1424,8 @@ describe('WorkbenchApp', () => {
     postedMessages.length = 0;
 
     const featureBranch = screen.getByTitle('refs/heads/feature/assets-fix');
+    expect(screen.queryByText('origin/feature/assets-fix')).not.toBeInTheDocument();
+    expect(featureBranch).toHaveTextContent('↑1');
     fireEvent.click(featureBranch);
     const filterRequest = postedMessages.find((message) => message.type === 'updateFilters');
     expect(filterRequest).toMatchObject({

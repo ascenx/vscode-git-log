@@ -570,20 +570,6 @@ select:focus-visible,
   font-size: 11px;
 }
 
-.upstream {
-  min-width: 0;
-  margin-left: auto;
-  overflow: hidden;
-  color: var(--vscode-descriptionForeground);
-  font-size: 10px;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.upstream + .tracking {
-  margin-left: 4px;
-}
-
 .log-pane {
   display: grid;
   grid-column: 3;

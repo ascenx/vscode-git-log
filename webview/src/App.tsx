@@ -610,7 +610,6 @@ function RefTreeNodes({
           {ref.kind === 'tag' ? '◆' : '⌁'}
         </span>
         <span className="ref-name">{node.name}</span>
-        {ref.upstream ? <span className="upstream">{ref.upstream}</span> : null}
         {ref.ahead || ref.behind ? (
           <span className="tracking">
             {ref.ahead ? `↑${String(ref.ahead)}` : ''}
