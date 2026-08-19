@@ -54,10 +54,10 @@ describe('classifyGitError', () => {
       false,
     );
 
-    expect(classifier.classifyGitError(unavailable)).toMatchObject({
-      category: 'repository',
-      message: expect.stringContaining('gitLogWorkbench.git.path'),
-    });
+    const classified = classifier.classifyGitError(unavailable);
+    expect(classified).toMatchObject({ category: 'repository' });
+    expect(classified.message).toContain('Git 2.27 or newer');
+    expect(classified.message).toContain('gitLogWorkbench.git.path');
   });
 
   it('does not misclassify timeouts or output limits as a missing Git executable', async () => {

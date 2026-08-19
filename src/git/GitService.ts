@@ -168,8 +168,9 @@ export class GitService {
       if (/^[0-9a-f]{4,64}$/iu.test(text)) {
         let resolvedHash: string | undefined;
         try {
+          // The hexadecimal-only input is option-safe; rev-parse gained --end-of-options in Git 2.30.
           const resolution = await this.runner.run(
-            ['rev-parse', '--verify', '--end-of-options', `${text}^{commit}`],
+            ['rev-parse', '--verify', `${text}^{commit}`],
             { cwd, ...(query.signal ? { signal: query.signal } : {}), timeoutMs: 30_000 },
           );
           resolvedHash = resolution.stdout.toString('utf8').trim();

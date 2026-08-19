@@ -93,10 +93,16 @@ describe('discoverRepositories', () => {
     });
     await expect(
       ensureSupportedGit(
-        { run: () => Promise.resolve(result('git version 2.29.9')) } as never,
+        { run: () => Promise.resolve(result('git version 2.26.9')) } as never,
         process.cwd(),
       ),
-    ).rejects.toThrow('Git 2.30 or newer');
+    ).rejects.toThrow('Git 2.27 or newer');
+    await expect(
+      ensureSupportedGit(
+        { run: () => Promise.resolve(result('git version 2.27.0')) } as never,
+        process.cwd(),
+      ),
+    ).resolves.toBe('2.27.0');
     await expect(
       ensureSupportedGit(
         { run: () => Promise.resolve(result('git version 2.44.0.windows.1')) } as never,

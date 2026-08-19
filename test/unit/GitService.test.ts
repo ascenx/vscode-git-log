@@ -44,6 +44,38 @@ async function createHistoryFixture(): Promise<string> {
 }
 
 describe('GitService', () => {
+  it('resolves exact hash searches with Git 2.27-compatible arguments', async () => {
+    const hash = 'a'.repeat(40);
+    const run = vi
+      .fn()
+      .mockResolvedValueOnce({
+        stdout: Buffer.from(`${hash}\n`),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        durationMs: 1,
+      })
+      .mockResolvedValueOnce({
+        stdout: Buffer.alloc(0),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        durationMs: 1,
+      });
+    const service = new GitService({ run } as unknown as GitRunner);
+
+    await service.getLog('/workspace/project', {
+      limit: 1,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: hash },
+    });
+
+    expect(run).toHaveBeenNthCalledWith(
+      1,
+      ['rev-parse', '--verify', `${hash}^{commit}`],
+      expect.objectContaining({ cwd: '/workspace/project' }),
+    );
+  });
+
   it('loads a complete commit message with a bounded Git output', async () => {
     const run = vi.fn().mockResolvedValue({
       stdout: Buffer.from('subject\n\nbody\n\n'),

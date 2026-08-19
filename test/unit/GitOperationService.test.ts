@@ -683,6 +683,7 @@ describe('GitOperationService', () => {
     );
 
     expect(target).toEqual({ remote: 'origin', targetRef: 'refs/heads/main' });
+    expect(calls).toContainEqual(['rev-parse', '--verify', 'HEAD^{commit}']);
     expect(calls.at(-1)).toEqual([
       'push',
       '--force-with-lease=refs/heads/main',

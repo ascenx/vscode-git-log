@@ -359,8 +359,9 @@ export class GitOperationService {
             remote: plan.remote,
             targetRef: plan.targetRef,
           };
+          // validateToken rejects option-like sources; rev-parse gained --end-of-options in Git 2.30.
           const source = await this.runner.run(
-            ['rev-parse', '--verify', '--end-of-options', `${plan.sourceRef}^{commit}`],
+            ['rev-parse', '--verify', `${plan.sourceRef}^{commit}`],
             { cwd: fileURLToPath(freshRepository.rootUri), timeoutMs: 30_000 },
           );
           forceSourceHash = source.stdout.toString('utf8').trim();

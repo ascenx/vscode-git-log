@@ -108,8 +108,8 @@ export async function ensureSupportedGit(runner: GitRunner, cwd: string): Promis
   const major = Number(match[1]);
   const minor = Number(match[2]);
   const patch = Number(match[3] ?? 0);
-  if (major < 2 || (major === 2 && minor < 30)) {
-    throw new Error(`Git 2.30 or newer is required; found ${major}.${minor}.${patch}.`);
+  if (major < 2 || (major === 2 && minor < 27)) {
+    throw new Error(`Git 2.27 or newer is required; found ${major}.${minor}.${patch}.`);
   }
   return `${major}.${minor}.${patch}`;
 }

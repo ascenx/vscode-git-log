@@ -2,6 +2,12 @@
 
 All notable changes to Git Log are documented in this file.
 
+## Unreleased
+
+### Changed
+
+- Lowered the minimum supported Git version from 2.30 to 2.27 while preserving exact hash search and force-push target resolution.
+
 ## 0.0.4
 
 ### Added

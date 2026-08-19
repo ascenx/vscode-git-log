@@ -42,7 +42,7 @@ export function classifyGitError(error: GitCommandError): ClassifiedGitError {
     return {
       category: 'repository',
       message:
-        'Git executable is unavailable. Install Git 2.30 or newer, or configure gitLogWorkbench.git.path.',
+        'Git executable is unavailable. Install Git 2.27 or newer, or configure gitLogWorkbench.git.path.',
       detail,
     };
   }
