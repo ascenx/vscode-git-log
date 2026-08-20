@@ -833,7 +833,12 @@ select:focus-visible,
   z-index: 40;
   display: grid;
   min-width: 190px;
+  max-width: calc(100vw - 8px);
+  max-height: calc(100vh - 8px);
   padding: 4px;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   border: 1px solid var(--vscode-menu-border, var(--vscode-widget-border));
   border-radius: 4px;
   background: var(--vscode-menu-background);

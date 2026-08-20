@@ -4091,7 +4091,7 @@ describe('WorkbenchApp', () => {
     fireEvent.pointerDown(moreButton);
     fireEvent.click(moreButton);
     expect(screen.queryByRole('dialog', { name: 'user filter' })).not.toBeInTheDocument();
-    expect(screen.getByRole('menu', { name: 'toolbar actions' })).toHaveStyle({ left: '802px' });
+    expect(screen.getByRole('menu', { name: 'toolbar actions' })).toHaveStyle({ right: '32px' });
 
     fireEvent.pointerDown(moreButton);
     fireEvent.click(moreButton);
@@ -4100,6 +4100,90 @@ describe('WorkbenchApp', () => {
     fireEvent.click(userButton);
     fireEvent.pointerDown(screen.getByRole('grid', { name: 'Commit log' }));
     expect(screen.queryByRole('dialog', { name: 'user filter' })).not.toBeInTheDocument();
+  });
+
+  it('opens context menus toward the available viewport space', () => {
+    const innerWidth = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1000);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(760);
+    try {
+      initializeCommitRangeFixture();
+      const row = screen.getByText('middle commit').closest('[role="row"]') as HTMLElement;
+
+      fireEvent.contextMenu(row, { clientX: 980, clientY: 740 });
+
+      expect(screen.getByRole('menu', { name: 'commit actions' })).toHaveStyle({
+        right: '20px',
+        bottom: '20px',
+      });
+    } finally {
+      innerWidth.mockRestore();
+      innerHeight.mockRestore();
+    }
+  });
+
+  it('clamps a measured context menu above the viewport bottom', () => {
+    const innerWidth = vi.spyOn(window, 'innerWidth', 'get').mockReturnValue(1000);
+    const innerHeight = vi.spyOn(window, 'innerHeight', 'get').mockReturnValue(760);
+    const menuBounds = vi
+      .spyOn(window.HTMLElement.prototype, 'getBoundingClientRect')
+      .mockImplementation(function getBoundingClientRect(this: HTMLElement) {
+        if (this.classList.contains('context-menu')) {
+          return {
+            x: 100,
+            y: 300,
+            top: 300,
+            right: 340,
+            bottom: 800,
+            left: 100,
+            width: 240,
+            height: 500,
+            toJSON: () => ({}),
+          } as DOMRect;
+        }
+        return {
+          x: 0,
+          y: 0,
+          top: 0,
+          right: 0,
+          bottom: 0,
+          left: 0,
+          width: 0,
+          height: 0,
+          toJSON: () => ({}),
+        } as DOMRect;
+      });
+    try {
+      initializeCommitRangeFixture();
+      const row = screen.getByText('middle commit').closest('[role="row"]') as HTMLElement;
+
+      fireEvent.contextMenu(row, { clientX: 100, clientY: 300 });
+
+      expect(screen.getByRole('menu', { name: 'commit actions' })).toHaveStyle({
+        left: '100px',
+        top: '256px',
+      });
+    } finally {
+      menuBounds.mockRestore();
+      innerWidth.mockRestore();
+      innerHeight.mockRestore();
+    }
+  });
+
+  it('dismisses a context menu when the underlying list starts scrolling', () => {
+    initializeCommitRangeFixture();
+    const row = screen.getByText('middle commit').closest('[role="row"]') as HTMLElement;
+    const viewport = row.closest('.commit-viewport') as HTMLElement;
+
+    fireEvent.contextMenu(row);
+    expect(screen.getByRole('menu', { name: 'commit actions' })).toBeInTheDocument();
+
+    fireEvent.wheel(viewport, { deltaY: 80 });
+    expect(screen.queryByRole('menu', { name: 'commit actions' })).not.toBeInTheDocument();
+
+    fireEvent.contextMenu(row);
+    const menu = screen.getByRole('menu', { name: 'commit actions' });
+    fireEvent.wheel(menu, { deltaY: 80 });
+    expect(menu).toBeInTheDocument();
   });
 
   it('offers the configured Git identity as a pinned Me filter even when it is not loaded', () => {

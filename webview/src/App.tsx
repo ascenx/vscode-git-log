@@ -1,6 +1,7 @@
 import {
   useCallback,
   useEffect,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -164,6 +165,21 @@ const initialState: WorkbenchState = {
 
 function requestId(prefix: string): string {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function contextMenuPosition(x: number, y: number): CSSProperties {
+  const margin = 4;
+  const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+  const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+  const horizontal =
+    x > viewportWidth / 2
+      ? { right: Math.max(margin, viewportWidth - x) }
+      : { left: Math.max(margin, x) };
+  const vertical =
+    y > viewportHeight / 2
+      ? { bottom: Math.max(margin, viewportHeight - y) }
+      : { top: Math.max(margin, y) };
+  return { ...horizontal, ...vertical };
 }
 
 function formatDate(timestamp: number): string {
@@ -649,6 +665,9 @@ export function App() {
     | { kind: 'head'; repositoryId: string; hash: string; x: number; y: number }
     | undefined
   >();
+  const [measuredContextMenuPosition, setMeasuredContextMenuPosition] = useState<
+    CSSProperties | undefined
+  >();
   const [squashOperation, setSquashOperation] = useState<
     | {
         repositoryId: string;
@@ -713,6 +732,7 @@ export function App() {
   const searchRef = useRef<HTMLInputElement>(null);
   const logRef = useRef<HTMLElement>(null);
   const logHeaderRef = useRef<HTMLDivElement>(null);
+  const contextMenuRef = useRef<HTMLDivElement>(null);
   const syncLogHeaderScroll = useCallback((scrollLeft: number): void => {
     if (logHeaderRef.current) {
       logHeaderRef.current.style.transform = `translateX(${-scrollLeft}px)`;
@@ -831,6 +851,41 @@ export function App() {
     state.layout.filesWidth,
     state.layout.refsWidth,
   ]);
+  useLayoutEffect(() => {
+    const menu = contextMenuRef.current;
+    if (!contextMenu || !menu) return;
+    const updatePosition = (): void => {
+      const bounds = menu.getBoundingClientRect();
+      if (bounds.width <= 0 || bounds.height <= 0) return;
+      const margin = 4;
+      const viewportWidth = window.innerWidth || document.documentElement.clientWidth;
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+      const preferredLeft =
+        contextMenu.x > viewportWidth / 2 ? contextMenu.x - bounds.width : contextMenu.x;
+      const preferredTop =
+        contextMenu.y > viewportHeight / 2 ? contextMenu.y - bounds.height : contextMenu.y;
+      const left = Math.min(
+        Math.max(margin, preferredLeft),
+        Math.max(margin, viewportWidth - bounds.width - margin),
+      );
+      const top = Math.min(
+        Math.max(margin, preferredTop),
+        Math.max(margin, viewportHeight - bounds.height - margin),
+      );
+      setMeasuredContextMenuPosition({ left, top });
+    };
+    updatePosition();
+    window.addEventListener('resize', updatePosition);
+    if (typeof ResizeObserver === 'undefined') {
+      return () => window.removeEventListener('resize', updatePosition);
+    }
+    const observer = new ResizeObserver(updatePosition);
+    observer.observe(menu);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', updatePosition);
+    };
+  }, [contextMenu]);
   useEffect(() => {
     if (!window.matchMedia) return;
     const filesQuery = window.matchMedia('(max-width: 900px)');
@@ -2379,7 +2434,7 @@ export function App() {
                 : {
                     kind: 'toolbar',
                     repositoryId: state.selectedRepositoryId as string,
-                    x: bounds.right - 190,
+                    x: bounds.right,
                     y: bounds.bottom + 2,
                   },
             );
@@ -2395,6 +2450,26 @@ export function App() {
       className={`workbench-shell${filesCollapsed ? ' files-collapsed' : ''}`}
       style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${state.layout.detailsHeight}px` }}
       onKeyDown={handleWorkbenchKeyDown}
+      onWheelCapture={(event) => {
+        const target = event.target;
+        if (
+          !contextMenu ||
+          (target instanceof Element && target.closest('.context-menu'))
+        ) {
+          return;
+        }
+        setContextMenu(undefined);
+      }}
+      onScrollCapture={(event) => {
+        const target = event.target;
+        if (
+          !contextMenu ||
+          (target instanceof Element && target.closest('.context-menu'))
+        ) {
+          return;
+        }
+        setContextMenu(undefined);
+      }}
     >
       {globalToolbar}
       {state.error ? (
@@ -3101,10 +3176,13 @@ export function App() {
 
       {contextMenu ? (
         <div
+          ref={contextMenuRef}
           className="context-menu"
           role="menu"
           aria-label={`${contextMenu.kind} actions`}
-          style={{ left: Math.max(4, contextMenu.x), top: Math.max(4, contextMenu.y) }}
+          style={
+            measuredContextMenuPosition ?? contextMenuPosition(contextMenu.x, contextMenu.y)
+          }
           onClick={(event) => {
             const target = event.target;
             if (!(target instanceof Element)) return;

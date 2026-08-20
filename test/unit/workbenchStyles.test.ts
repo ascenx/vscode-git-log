@@ -64,6 +64,14 @@ describe('workbench styles', () => {
     expect(app).toContain('getBoundingClientRect()');
   });
 
+  it('keeps tall context menus inside the viewport and scrollable', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.context-menu\s*\{[^}]*max-height:\s*calc\(100vh - 8px\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/su,
+    );
+  });
+
   it('pins every workspace pane to its grid column when sibling panes are hidden', async () => {
     const styles = await readFile('webview/src/styles.css', 'utf8');
     const app = await readFile('webview/src/App.tsx', 'utf8');
