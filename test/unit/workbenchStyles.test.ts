@@ -149,4 +149,37 @@ describe('workbench styles', () => {
       /\.file-stat-deletions\s*\{[^}]*color:\s*var\(--vscode-gitDecoration-deletedResourceForeground\);/su,
     );
   });
+
+  it('aligns the stash checkbox with the primary Stash action', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+    const app = await readFile('webview/src/App.tsx', 'utf8');
+
+    expect(app).toContain('className="stash-create-actions"');
+    expect(app).toContain('className="stash-checkbox"');
+    expect(app).toContain('className="stash-submit-button"');
+    expect(styles).toMatch(
+      /\.operation-dialog input:not\(\[type='checkbox'\]\),\s*\n\.operation-dialog textarea\s*\{/su,
+    );
+    expect(styles).toMatch(
+      /\.stash-create-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*space-between;[^}]*flex-wrap:\s*wrap;/su,
+    );
+    expect(styles).toMatch(
+      /\.stash-checkbox input\[type='checkbox'\]\s*\{[^}]*width:\s*16px;[^}]*height:\s*16px;/su,
+    );
+  });
+
+  it('uses a wider stash dialog with a top-right close button and no horizontal scrolling', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+    const app = await readFile('webview/src/App.tsx', 'utf8');
+
+    expect(app).toContain('className="stash-dialog-close"');
+    expect(app).toContain('aria-label="Close stash manager"');
+    expect(styles).toMatch(
+      /\.stash-dialog\s*\{[^}]*position:\s*relative;[^}]*width:\s*min\(920px, calc\(100vw - 32px\)\);[^}]*overflow-x:\s*hidden;[^}]*overflow-y:\s*auto;/su,
+    );
+    expect(styles).toMatch(
+      /\.stash-dialog-close\s*\{[^}]*position:\s*absolute;[^}]*top:\s*10px;[^}]*right:\s*10px;/su,
+    );
+    expect(styles).toMatch(/\.stash-tool-row\s*\{[^}]*flex-wrap:\s*wrap;/su);
+  });
 });

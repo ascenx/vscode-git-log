@@ -882,12 +882,121 @@ select:focus-visible,
   box-shadow: 0 8px 24px var(--vscode-widget-shadow);
 }
 
+.stash-dialog {
+  position: relative;
+  width: min(920px, calc(100vw - 32px));
+  max-height: min(720px, calc(100vh - 32px));
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.stash-dialog > strong:first-of-type {
+  padding-right: 32px;
+}
+
+.stash-dialog-close {
+  position: absolute;
+  z-index: 1;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  place-items: center;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  font-size: 20px;
+  line-height: 1;
+}
+
+.stash-dialog-close:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.stash-tool-section {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+  padding: 10px 0;
+  border-top: 1px solid var(--vscode-panel-border);
+}
+
+.stash-tool-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.stash-tool-row > span {
+  min-width: 0;
+  flex: 1 1 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.stash-message-input {
+  min-width: 0;
+  width: 100%;
+}
+
+.stash-create-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+}
+
+.operation-dialog .stash-checkbox {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  gap: 7px;
+  color: var(--vscode-foreground);
+  cursor: pointer;
+}
+
+.stash-checkbox input[type='checkbox'] {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: var(--vscode-checkbox-selectBackground, var(--vscode-button-background));
+}
+
+.stash-checkbox:has(input:disabled) {
+  color: var(--vscode-disabledForeground);
+  cursor: default;
+}
+
+.stash-submit-button {
+  height: 28px;
+  margin-left: auto;
+  padding: 0 14px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.stash-submit-button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.stash-submit-button:disabled {
+  opacity: 0.55;
+}
+
 .operation-dialog label {
   display: grid;
   gap: 6px;
 }
 
-.operation-dialog input,
+.operation-dialog input:not([type='checkbox']),
 .operation-dialog textarea {
   height: 28px;
   padding: 0 7px;

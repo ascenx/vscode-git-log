@@ -80,6 +80,72 @@ async function commitFile(cwd: string, name: string, content: string, message: s
 }
 
 describe('GitOperationService', () => {
+  it('maps stash and Amend HEAD requests to safe Git arguments', async () => {
+    const { buildOperationArguments } = await import('../../src/git/GitOperationService');
+
+    expect(
+      buildOperationArguments({
+        kind: 'createStash',
+        message: 'work in progress',
+        includeUntracked: true,
+      }),
+    ).toEqual(['stash', 'push', '--include-untracked', '-m', 'work in progress']);
+    expect(buildOperationArguments({ kind: 'applyStash', stash: 'stash@{2}' })).toEqual([
+      'stash',
+      'apply',
+      'stash@{2}',
+    ]);
+    expect(buildOperationArguments({ kind: 'popStash', stash: 'stash@{0}' })).toEqual([
+      'stash',
+      'pop',
+      'stash@{0}',
+    ]);
+    expect(buildOperationArguments({ kind: 'dropStash', stash: 'stash@{1}' })).toEqual([
+      'stash',
+      'drop',
+      'stash@{1}',
+    ]);
+    expect(buildOperationArguments({ kind: 'amendCommit', message: 'amended' })).toEqual([
+      'commit',
+      '--amend',
+      '-m',
+      'amended',
+    ]);
+  });
+
+  it('creates and restores a named stash in a real repository', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-stash-');
+    await writeFile(join(fixture.path, 'base.txt'), 'changed\n');
+    await writeFile(join(fixture.path, 'untracked.txt'), 'untracked\n');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(fixture.summary, {
+      kind: 'createStash',
+      message: 'IDE work',
+      includeUntracked: true,
+    });
+    expect(await git(fixture.path, 'status', '--porcelain')).toBe('');
+
+    await service.run(fixture.summary, { kind: 'popStash', stash: 'stash@{0}' });
+    expect(await git(fixture.path, 'status', '--porcelain')).toContain('base.txt');
+    expect(await git(fixture.path, 'status', '--porcelain')).toContain('untracked.txt');
+  });
+
+  it('amends HEAD with the supplied commit message', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-amend-');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(
+      fixture.summary,
+      { kind: 'amendCommit', message: 'base amended' },
+      { confirm: () => Promise.resolve(true) },
+    );
+
+    expect(await git(fixture.path, 'log', '-1', '--format=%s')).toBe('base amended');
+  });
+
   it('drops a contiguous commit range and rebases newer descendants', async () => {
     const { GitOperationService } = await import('../../src/git/GitOperationService');
     const fixture = await createFixtureRepository('git-operation-drop-range-');

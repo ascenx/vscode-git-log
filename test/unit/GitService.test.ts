@@ -44,6 +44,17 @@ async function createHistoryFixture(): Promise<string> {
 }
 
 describe('GitService', () => {
+  it('lists named stashes from a real repository', async () => {
+    const repository = await createHistoryFixture();
+    await writeFile(join(repository, 'README.md'), 'stashed\n');
+    await git(repository, 'stash', 'push', '-m', 'saved work');
+
+    const service = new GitService(new GitRunner());
+    await expect(service.getStashes(repository)).resolves.toEqual([
+      expect.objectContaining({ ref: 'stash@{0}', subject: expect.stringContaining('saved work') }),
+    ]);
+  });
+
   it('resolves exact hash searches with Git 2.27-compatible arguments', async () => {
     const hash = 'a'.repeat(40);
     const run = vi

@@ -75,6 +75,7 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Combined Text/Hash, Branch, User, Date, and Path filters with cancellation and stale-response rejection. Repository refreshes do not overwrite an active search draft. Text queries scan the full message, author name, and email in canonical `git log --date-order` order while preserving child-before-parent topology.
 - Changed-file handling for root, merge, rename, copy, and binary commits, with native VS Code diffs. Multi-commit selections combine files from every selected commit while retaining the correct commit and parent for each file action.
 - Checkout, Checkout Revision, Branch, Tag, Fetch, Pull, Push, Cherry-pick, Revert, Merge, Rebase, Reset, and branch rename/delete operations, with context menus for commits and Local, Remote, Tag, and HEAD refs.
+- Complete stash management supports optional untracked files, change previews, Apply, Pop, and confirmed Drop.
 - Branch clicks select and display that branch's commits without checking it out; checkout remains an explicit Ref context-menu action.
 - Commits can be selected as a contiguous range with Shift+click or Shift+Arrow keys, or toggled individually with Ctrl/Cmd+click. Changed Files combines every selected commit; Drop and Squash remain limited to contiguous ranges. Squash preloads the selected full commit messages in visible top-to-bottom order. History rewrites require a clean worktree and explicit confirmation, and reject root commits, merge commits, stale selections, and changes to the active branch or HEAD during confirmation.
 - Unmerged branch deletion errors offer a warning-colored Force Delete action, and error notices remain visible for five seconds before closing automatically.
@@ -88,6 +89,7 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Current Line, Selection, and File History open in dedicated editor tabs. The left side lists related commits and change counts, and the divider between the commit list and diff is draggable and persisted.
 - History tabs show an inline diff for the focused range or complete file. A separate Worker uses Shiki with lazily loaded grammars for syntax highlighting. `VS Code Diff` opens the current commit in the native Diff Editor with minimap, search, language support, and standard shortcuts. Switching commits cancels stale highlighting work, while timeouts, oversized patches, long lines, or excessive token budgets fall back to plain text without blocking the Extension Host.
 - Complete keyboard navigation, two-stage `Escape` handling in search, `Ctrl/Cmd+C` commit hash copying, and light, dark, and high-contrast theme support.
+- The current branch tip supports Amend HEAD with commit-message editing and staged-change inclusion.
 
 ## Local development
 
@@ -122,6 +124,7 @@ npm run package
 - Drag pane and commit-column separators with the mouse, or focus a separator and adjust it with the arrow keys. Toolbar actions can collapse Refs and Changed Files; Commit, Author, Date, and Refs remain available.
 - The User filter pins `Me (current Git user)` to the top using the repository's `git config user.name/user.email`, preferring email matching. Toolbar buttons include hover descriptions.
 - Refresh reads local repository state only. Fetch, Pull, and Push access the configured remote and reuse the system credential helper or SSH Agent.
+- Use `Stashes` to create, inspect, apply, pop, or drop saved work.
 
 ## Security and privacy
 

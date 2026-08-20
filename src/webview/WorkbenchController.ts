@@ -318,6 +318,34 @@ export class WorkbenchController {
             });
           }
           break;
+        case 'requestStashState': {
+          this.requireSelectedRepository(message.repositoryId);
+          const repository = this.requireRepository(message.repositoryId);
+          const stashes = await this.options.gitService.getStashes(
+            fileURLToPath(repository.rootUri),
+          );
+          await this.options.postMessage({
+            type: 'stashStateLoaded',
+            requestId: message.requestId,
+            repositoryId: message.repositoryId,
+            stashes,
+          });
+          break;
+        }
+        case 'openStashComparison': {
+          this.requireSelectedRepository(message.repositoryId);
+          if (!this.options.openCommitComparison) {
+            throw new Error('Comparison integration is not available.');
+          }
+          const repository = this.requireRepository(message.repositoryId);
+          const cwd = fileURLToPath(repository.rootUri);
+          const details = await this.options.gitService.getCommitDetails(cwd, message.hash, []);
+          const parent = details.parents[0];
+          if (!parent) throw new Error('This stash has no base revision to compare.');
+          const files = await this.options.gitService.getChangedFiles(cwd, message.hash, parent);
+          await this.options.openCommitComparison(repository, { hash: message.hash, parent }, files);
+          break;
+        }
         case 'refresh':
           await this.refresh(message.requestId, message.repositoryId ?? this.selectedRepositoryId);
           break;

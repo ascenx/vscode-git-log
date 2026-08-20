@@ -8,7 +8,13 @@ import { applyNumstat, parseNameStatus } from './parsers/parseChangedFiles';
 import { parseLog, parseSearchableLog } from './parsers/parseLog';
 import { parseRefs } from './parsers/parseRefs';
 import type { LogFilters } from '../protocol/messages';
-import type { ChangedFile, CommitDetails, CommitSummary, RefLabel } from '../shared/models';
+import type {
+  ChangedFile,
+  CommitDetails,
+  CommitSummary,
+  RefLabel,
+  StashEntry,
+} from '../shared/models';
 
 const REF_FORMAT = '%(refname)%00%(objectname)%00%(*objectname)%00%(upstream)%00%(upstream:track)%00';
 const LOG_FORMAT = '%x1e%H%x00%P%x00%an%x00%ae%x00%at%x00%ct%x00%s%x00';
@@ -71,6 +77,24 @@ export class GitService {
   private readonly textSearchCaches = new Map<string, TextSearchCacheEntry>();
 
   constructor(private readonly runner: GitRunner) {}
+
+  async getStashes(cwd: string, signal?: AbortSignal): Promise<StashEntry[]> {
+    const result = await this.runner.run(
+      ['stash', 'list', '--format=%gd%x00%H%x00%ct%x00%s%x00'],
+      { cwd, ...(signal ? { signal } : {}), timeoutMs: 30_000 },
+    );
+    const fields = result.stdout.toString('utf8').replace(/\r?\n/gu, '').split('\0');
+    const entries: StashEntry[] = [];
+    for (let index = 0; index + 3 < fields.length; index += 4) {
+      const ref = fields[index];
+      const hash = fields[index + 1];
+      const timestamp = Number.parseInt(fields[index + 2] ?? '', 10);
+      const subject = fields[index + 3];
+      if (!ref || !hash || !subject || !Number.isFinite(timestamp)) continue;
+      entries.push({ ref, hash, timestamp, subject });
+    }
+    return entries;
+  }
 
   private getTextSearchCache(cwd: string, filters: LogFilters): TextSearchCacheEntry {
     const key = JSON.stringify([

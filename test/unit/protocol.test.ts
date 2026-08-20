@@ -1,6 +1,42 @@
 import { describe, expect, it } from 'vitest';
 
 describe('parseWebviewMessage', () => {
+  it('validates stash management and Amend HEAD requests', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const operation = (value: Record<string, unknown>) =>
+      parseWebviewMessage({
+        type: 'runOperation',
+        requestId: 'operation',
+        repositoryId: 'repository-1',
+        operation: value,
+      });
+
+    expect(
+      operation({ kind: 'createStash', message: 'work in progress', includeUntracked: true }),
+    ).toBeDefined();
+    expect(operation({ kind: 'applyStash', stash: 'stash@{2}' })).toBeDefined();
+    expect(operation({ kind: 'popStash', stash: 'stash@{0}' })).toBeDefined();
+    expect(operation({ kind: 'dropStash', stash: 'stash@{1}' })).toBeDefined();
+    expect(operation({ kind: 'dropStash', stash: 'refs/heads/main' })).toBeUndefined();
+    expect(operation({ kind: 'amendCommit', message: 'amended message' })).toBeDefined();
+    expect(operation({ kind: 'amendCommit', message: '   ' })).toBeUndefined();
+    expect(
+      parseWebviewMessage({
+        type: 'requestStashState',
+        requestId: 'stash-state',
+        repositoryId: 'repository-1',
+      }),
+    ).toBeDefined();
+    expect(
+      parseWebviewMessage({
+        type: 'openStashComparison',
+        requestId: 'stash-diff',
+        repositoryId: 'repository-1',
+        hash: 'a'.repeat(40),
+      }),
+    ).toBeDefined();
+  });
+
   it('validates bounded unique commit ranges and squash messages', async () => {
     const { parseWebviewMessage } = await import('../../src/protocol/messages');
     const hashes = ['b'.repeat(40), 'a'.repeat(40)];

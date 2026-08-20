@@ -37,6 +37,18 @@ function validateHash(value: string): string {
   return value;
 }
 
+function validateStashRef(value: string): string {
+  if (!/^stash@\{\d+\}$/u.test(value)) throw new Error(`Invalid stash reference: ${value}`);
+  return value;
+}
+
+function validateCommitMessage(value: string, label: string): string {
+  if (!value.trim() || value.length > 100_000 || value.includes('\0')) {
+    throw new Error(`Invalid ${label}.`);
+  }
+  return value;
+}
+
 export function buildOperationArguments(
   operation: GitOperationRequest,
   forceSourceHash?: string,
@@ -119,6 +131,27 @@ export function buildOperationArguments(
         '--',
         validateToken(operation.name, 'branch name'),
       ];
+    case 'createStash': {
+      const message = operation.message.trim() || 'Git Log stash';
+      if (message.length > 10_000 || message.includes('\0')) {
+        throw new Error('Invalid stash message.');
+      }
+      return [
+        'stash',
+        'push',
+        ...(operation.includeUntracked ? ['--include-untracked'] : []),
+        '-m',
+        message,
+      ];
+    }
+    case 'applyStash':
+      return ['stash', 'apply', validateStashRef(operation.stash)];
+    case 'popStash':
+      return ['stash', 'pop', validateStashRef(operation.stash)];
+    case 'dropStash':
+      return ['stash', 'drop', validateStashRef(operation.stash)];
+    case 'amendCommit':
+      return ['commit', '--amend', '-m', validateCommitMessage(operation.message, 'amend message')];
     case 'dropCommits':
     case 'squashCommits':
       throw new Error(`${operation.kind} requires a validated history rewrite plan.`);
@@ -161,6 +194,14 @@ export function getOperationConfirmation(
       destructive: true,
     };
   }
+  if (operation.kind === 'dropStash') {
+    return {
+      title: `Drop ${operation.stash}?`,
+      detail: `Repository “${repository.displayName}” will permanently remove ${operation.stash}.`,
+      confirmLabel: 'Drop Stash',
+      destructive: true,
+    };
+  }
   if (operation.kind === 'push' && operation.forceWithLease) {
     const target =
       operation.remote && operation.targetRef
@@ -182,6 +223,14 @@ export function getOperationConfirmation(
           ? `Repository “${repository.displayName}” will remove ${String(count)} commits from the current branch and rewrite newer commits.`
           : `Repository “${repository.displayName}” will combine ${String(count)} commits and rewrite newer commits.`,
       confirmLabel: operation.kind === 'dropCommits' ? 'Drop Commits' : 'Squash Commits',
+      destructive: true,
+    };
+  }
+  if (operation.kind === 'amendCommit') {
+    return {
+      title: 'Amend the current HEAD commit?',
+      detail: `Repository “${repository.displayName}” will replace the current HEAD commit and include staged changes.`,
+      confirmLabel: 'Amend Commit',
       destructive: true,
     };
   }

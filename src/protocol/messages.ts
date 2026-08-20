@@ -6,6 +6,7 @@ import type {
   HistoryEntry,
   RefLabel,
   RepositorySummary,
+  StashEntry,
 } from '../shared/models';
 import type { GraphContinuationState } from '../graph/layoutCommitGraph';
 
@@ -89,6 +90,8 @@ export type WebviewToExtensionMessage =
       parent?: string;
     }
   | { type: 'closeHistory'; requestId: string; repositoryId: string }
+  | { type: 'requestStashState'; requestId: string; repositoryId: string }
+  | { type: 'openStashComparison'; requestId: string; repositoryId: string; hash: string }
   | { type: 'refresh'; requestId: string; repositoryId?: string }
   | { type: 'showOutput'; requestId: string }
   | { type: 'copyToClipboard'; requestId: string; text: string }
@@ -150,6 +153,11 @@ export type GitOperationRequest =
   | { kind: 'reset'; hash: string; mode: 'soft' | 'mixed' | 'hard' }
   | { kind: 'renameBranch'; oldName: string; newName: string }
   | { kind: 'deleteBranch'; name: string; force: boolean }
+  | { kind: 'createStash'; message: string; includeUntracked: boolean }
+  | { kind: 'applyStash'; stash: string }
+  | { kind: 'popStash'; stash: string }
+  | { kind: 'dropStash'; stash: string }
+  | { kind: 'amendCommit'; message: string }
   | { kind: 'dropCommits'; hashes: string[] }
   | { kind: 'squashCommits'; hashes: string[]; message: string };
 
@@ -222,6 +230,12 @@ export type ExtensionToWebviewMessage =
   | { type: 'operationCompleted'; requestId: string; repositoryId: string; message: string }
   | { type: 'operationCancelled'; requestId: string; repositoryId: string }
   | { type: 'clipboardCopied'; requestId: string }
+  | {
+      type: 'stashStateLoaded';
+      requestId: string;
+      repositoryId: string;
+      stashes: StashEntry[];
+    }
   | {
       type: 'error';
       requestId: string;
@@ -436,6 +450,10 @@ function isRemoteBranchName(value: unknown): value is string {
   );
 }
 
+function isStashRef(value: unknown): value is string {
+  return typeof value === 'string' && /^stash@\{\d+\}$/u.test(value);
+}
+
 function isGitOperationRequest(value: unknown): value is GitOperationRequest {
   if (!isRecord(value) || typeof value.kind !== 'string') return false;
   switch (value.kind) {
@@ -473,6 +491,24 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
       return isGitRefName(value.oldName) && isGitRefName(value.newName);
     case 'deleteBranch':
       return isGitRefName(value.name) && typeof value.force === 'boolean';
+    case 'createStash':
+      return (
+        typeof value.message === 'string' &&
+        value.message.length <= 10_000 &&
+        !value.message.includes('\0') &&
+        typeof value.includeUntracked === 'boolean'
+      );
+    case 'applyStash':
+    case 'popStash':
+    case 'dropStash':
+      return isStashRef(value.stash);
+    case 'amendCommit':
+      return (
+        typeof value.message === 'string' &&
+        value.message.trim().length > 0 &&
+        value.message.length <= MAX_COMMIT_MESSAGE_LENGTH &&
+        !value.message.includes('\0')
+      );
     case 'dropCommits':
       return isCommitRange(value.hashes);
     case 'squashCommits':
@@ -579,6 +615,19 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
             type: value.type,
             requestId: value.requestId,
             repositoryId: value.repositoryId,
+          }
+        : undefined;
+    case 'requestStashState':
+      return hasRepository(value)
+        ? { type: value.type, requestId: value.requestId, repositoryId: value.repositoryId }
+        : undefined;
+    case 'openStashComparison':
+      return hasRepository(value) && isHash(value.hash)
+        ? {
+            type: value.type,
+            requestId: value.requestId,
+            repositoryId: value.repositoryId,
+            hash: value.hash,
           }
         : undefined;
     case 'refresh':

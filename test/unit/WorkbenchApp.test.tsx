@@ -152,6 +152,7 @@ describe('WorkbenchApp', () => {
       'Refresh log',
       'Go to HEAD',
       'Fetch remotes',
+      'Manage stashes',
       'Collapse references pane',
       'Collapse changed files pane',
       'More actions',
@@ -168,6 +169,118 @@ describe('WorkbenchApp', () => {
     expect(screen.getByText('Local')).toBeInTheDocument();
     expect(screen.getByText('Remote')).toBeInTheDocument();
     expect(screen.getByText('Tags')).toBeInTheDocument();
+  });
+
+  it('creates and inspects stashes from the global toolbar', () => {
+    render(<App />);
+    const stashHash = 'a'.repeat(40);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-stashes',
+            repositories: [
+              {
+                id: 'repo-stashes',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'main',
+              },
+            ],
+            selectedRepositoryId: 'repo-stashes',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+
+    fireEvent.click(screen.getByRole('button', { name: 'Manage stashes' }));
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({ type: 'requestStashState', repositoryId: 'repo-stashes' }),
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'stashStateLoaded',
+            requestId: 'stash-state-response',
+            repositoryId: 'repo-stashes',
+            stashes: [
+              {
+                ref: 'stash@{0}',
+                hash: stashHash,
+                timestamp: 1700000000,
+                subject: 'saved work',
+              },
+            ],
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByText('saved work')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Show changes for stash@{0}' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Stash message' }), {
+      target: { value: 'work in progress' },
+    });
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Include untracked files' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Stash' }));
+
+    expect(postedMessages).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ type: 'openStashComparison', hash: stashHash }),
+        expect.objectContaining({
+          type: 'runOperation',
+          operation: {
+            kind: 'createStash',
+            message: 'work in progress',
+            includeUntracked: true,
+          },
+        }),
+      ]),
+    );
+    completeLatestOperation();
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({ type: 'requestStashState', repositoryId: 'repo-stashes' }),
+    );
+
+    fireEvent.click(screen.getByRole('button', { name: 'Close stash manager' }));
+    expect(screen.queryByRole('dialog', { name: 'Stash management' })).not.toBeInTheDocument();
+  });
+
+  it('offers Amend HEAD only for the current branch tip', () => {
+    const { newest, middle } = initializeCommitRangeFixture();
+    const newestRow = screen.getByText('newest commit').closest('[role="row"]') as HTMLElement;
+    fireEvent.click(newestRow);
+    fireEvent.contextMenu(newestRow);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Amend HEAD…' }));
+    fireEvent.change(screen.getByRole('textbox', { name: 'Amend commit message' }), {
+      target: { value: 'newest amended' },
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Amend Commit' }));
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'runOperation',
+      operation: { kind: 'amendCommit', message: 'newest amended' },
+    });
+    completeLatestOperation();
+
+    const middleRow = screen.getByText('middle commit').closest('[role="row"]') as HTMLElement;
+    fireEvent.click(middleRow);
+    fireEvent.contextMenu(middleRow);
+    expect(screen.queryByRole('menuitem', { name: 'Amend HEAD…' })).not.toBeInTheDocument();
+    expect(newest).not.toBe(middle);
   });
 
   it('prevents native text selection inside the commit log', () => {

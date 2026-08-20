@@ -30,6 +30,7 @@ import type {
   RefKind,
   RefLabel,
   RepositorySummary,
+  StashEntry,
 } from '../../src/shared/models';
 import { getVsCodeApi } from './vscodeApi';
 import { CommitGraphCell } from './CommitGraphCell';
@@ -668,6 +669,19 @@ export function App() {
   const [historyParentPicker, setHistoryParentPicker] = useState<
     { repositoryId: string; commit: CommitSummary } | undefined
   >();
+  const [stashDialog, setStashDialog] = useState<
+    | {
+        repositoryId: string;
+        stashes: StashEntry[];
+        loading: boolean;
+        stashMessage: string;
+        includeUntracked: boolean;
+      }
+    | undefined
+  >();
+  const [amendDialog, setAmendDialog] = useState<
+    { repositoryId: string; message: string } | undefined
+  >();
   const [customDateFrom, setCustomDateFrom] = useState('');
   const [customDateTo, setCustomDateTo] = useState('');
   const [detailsHashCopyState, setDetailsHashCopyState] = useState<
@@ -715,6 +729,7 @@ export function App() {
     hash: string;
   } | undefined>(undefined);
   const activeCommitMessagesRequest = useRef<string | undefined>(undefined);
+  const stashDialogRepository = useRef<string | undefined>(undefined);
   const commitSelectionAnchor = useRef<string | undefined>(undefined);
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
@@ -938,6 +953,9 @@ export function App() {
           commitSelectionAnchor.current = undefined;
           setSelectedCommitHashes([]);
           setSquashOperation(undefined);
+          setStashDialog(undefined);
+          setAmendDialog(undefined);
+          stashDialogRepository.current = undefined;
           activeOperationRequestByRepository.current.clear();
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
@@ -980,6 +998,13 @@ export function App() {
                     .map((entry) => entry.message.replace(/\r?\n$/u, ''))
                     .join('\n\n'),
                 }
+              : current,
+          );
+          break;
+        case 'stashStateLoaded':
+          setStashDialog((current) =>
+            current && current.repositoryId === message.repositoryId
+              ? { ...current, stashes: message.stashes, loading: false }
               : current,
           );
           break;
@@ -1314,6 +1339,13 @@ export function App() {
                 : {}),
             };
           });
+          if (stashDialogRepository.current === message.repositoryId) {
+            vscode.postMessage({
+              type: 'requestStashState',
+              requestId: requestId('stash-state-refresh'),
+              repositoryId: message.repositoryId,
+            });
+          }
           break;
         case 'operationCancelled':
           if (
@@ -1428,6 +1460,9 @@ export function App() {
     commitSelectionAnchor.current = undefined;
     setSelectedCommitHashes([]);
     setSquashOperation(undefined);
+    setStashDialog(undefined);
+    setAmendDialog(undefined);
+    stashDialogRepository.current = undefined;
     lastWindowAnchorSignature.current = undefined;
     selectedRepositoryIdRef.current = repositoryId;
     setState((current) => ({
@@ -2284,6 +2319,31 @@ export function App() {
           onClick={() => runOperation({ kind: 'fetch' })}
         >
           ⇣
+        </button>
+        <button
+          type="button"
+          aria-label="Manage stashes"
+          title="Create, inspect, apply, pop, or drop stashes"
+          disabled={!state.selectedRepositoryId || selectedRepository?.isBare}
+          onClick={() => {
+            const repositoryId = state.selectedRepositoryId;
+            if (!repositoryId) return;
+            setStashDialog({
+              repositoryId,
+              stashes: [],
+              loading: true,
+              stashMessage: '',
+              includeUntracked: false,
+            });
+            stashDialogRepository.current = repositoryId;
+            send({
+              type: 'requestStashState',
+              requestId: requestId('stash-state'),
+              repositoryId,
+            });
+          }}
+        >
+          ◫
         </button>
         <button
           type="button"
@@ -3185,20 +3245,39 @@ export function App() {
               {!selectedRepository?.isBare && !selectedRepository?.operationState ? (
                 <>
               {contextMenu.commits.length === 1 ? (
-                <button
-                  type="button"
-                  role="menuitem"
-                  disabled={selectedOperationInFlight}
-                  title="Check out this commit in detached HEAD state"
-                  onClick={() =>
-                    runOperation(
-                      { kind: 'checkout', ref: contextMenu.commit.hash },
-                      contextMenu.repositoryId,
-                    )
-                  }
-                >
-                  Checkout Revision
-                </button>
+                <>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={selectedOperationInFlight}
+                    title="Check out this commit in detached HEAD state"
+                    onClick={() =>
+                      runOperation(
+                        { kind: 'checkout', ref: contextMenu.commit.hash },
+                        contextMenu.repositoryId,
+                      )
+                    }
+                  >
+                    Checkout Revision
+                  </button>
+                  {selectedRepository?.head === contextMenu.commit.hash &&
+                  selectedRepository.currentBranch ? (
+                    <button
+                      type="button"
+                      role="menuitem"
+                      disabled={selectedOperationInFlight}
+                      onClick={() => {
+                        setAmendDialog({
+                          repositoryId: contextMenu.repositoryId,
+                          message: contextMenu.commit.subject,
+                        });
+                        setContextMenu(undefined);
+                      }}
+                    >
+                      Amend HEAD…
+                    </button>
+                  ) : null}
+                </>
               ) : null}
               <button
                 type="button"
@@ -3737,6 +3816,171 @@ export function App() {
               ) : null}
             </>
           ) : null}
+        </div>
+      ) : null}
+
+      {stashDialog ? (
+        <div className="operation-dialog-backdrop">
+          <div
+            className="operation-dialog stash-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Stash management"
+          >
+            <button
+              className="stash-dialog-close"
+              type="button"
+              aria-label="Close stash manager"
+              title="Close"
+              onClick={() => {
+                stashDialogRepository.current = undefined;
+                setStashDialog(undefined);
+              }}
+            >
+              <span aria-hidden="true">×</span>
+            </button>
+            <strong>Stashes</strong>
+            <section className="stash-tool-section">
+              <span>Stash changes</span>
+              <input
+                className="stash-message-input"
+                aria-label="Stash message"
+                placeholder="Optional stash message"
+                value={stashDialog.stashMessage}
+                disabled={Boolean(selectedRepository?.operationState)}
+                onChange={(event) =>
+                  setStashDialog((current) =>
+                    current ? { ...current, stashMessage: event.target.value } : current,
+                  )
+                }
+              />
+              <div className="stash-create-actions">
+                <label className="stash-checkbox">
+                  <input
+                    type="checkbox"
+                    checked={stashDialog.includeUntracked}
+                    disabled={Boolean(selectedRepository?.operationState)}
+                    onChange={(event) =>
+                      setStashDialog((current) =>
+                        current ? { ...current, includeUntracked: event.target.checked } : current,
+                      )
+                    }
+                  />
+                  <span>Include untracked files</span>
+                </label>
+                <button
+                  className="stash-submit-button"
+                  type="button"
+                  disabled={Boolean(selectedRepository?.operationState) || selectedOperationInFlight}
+                  onClick={() =>
+                    runOperation(
+                      {
+                        kind: 'createStash',
+                        message: stashDialog.stashMessage,
+                        includeUntracked: stashDialog.includeUntracked,
+                      },
+                      stashDialog.repositoryId,
+                    )
+                  }
+                >
+                  Stash
+                </button>
+              </div>
+              {stashDialog.loading ? <span>Loading…</span> : null}
+              {stashDialog.stashes.map((stash) => (
+                <div className="stash-tool-row" key={stash.ref}>
+                  <span>{stash.subject}</span>
+                  <button
+                    type="button"
+                    aria-label={`Show changes for ${stash.ref}`}
+                    onClick={() =>
+                      send({
+                        type: 'openStashComparison',
+                        requestId: requestId('stash-diff'),
+                        repositoryId: stashDialog.repositoryId,
+                        hash: stash.hash,
+                      })
+                    }
+                  >
+                    Show Changes
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(selectedRepository?.operationState) || selectedOperationInFlight}
+                    onClick={() =>
+                      runOperation(
+                        { kind: 'applyStash', stash: stash.ref },
+                        stashDialog.repositoryId,
+                      )
+                    }
+                  >
+                    Apply
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(selectedRepository?.operationState) || selectedOperationInFlight}
+                    onClick={() =>
+                      runOperation(
+                        { kind: 'popStash', stash: stash.ref },
+                        stashDialog.repositoryId,
+                      )
+                    }
+                  >
+                    Pop
+                  </button>
+                  <button
+                    type="button"
+                    disabled={Boolean(selectedRepository?.operationState) || selectedOperationInFlight}
+                    onClick={() =>
+                      runOperation(
+                        { kind: 'dropStash', stash: stash.ref },
+                        stashDialog.repositoryId,
+                      )
+                    }
+                  >
+                    Drop…
+                  </button>
+                </div>
+              ))}
+            </section>
+          </div>
+        </div>
+      ) : null}
+
+      {amendDialog ? (
+        <div className="operation-dialog-backdrop">
+          <div className="operation-dialog" role="dialog" aria-modal="true" aria-label="Amend HEAD">
+            <strong>Amend HEAD</strong>
+            <span>Currently staged changes will be included in the amended commit.</span>
+            <textarea
+              aria-label="Amend commit message"
+              value={amendDialog.message}
+              onChange={(event) =>
+                setAmendDialog((current) =>
+                  current ? { ...current, message: event.target.value } : current,
+                )
+              }
+            />
+            <div className="operation-dialog-actions">
+              <button type="button" onClick={() => setAmendDialog(undefined)}>
+                Cancel
+              </button>
+              <button
+                type="button"
+                aria-label="Amend Commit"
+                disabled={!amendDialog.message.trim()}
+                onClick={() => {
+                  runOperation(
+                    { kind: 'amendCommit', message: amendDialog.message },
+                    amendDialog.repositoryId,
+                  );
+                  setAmendDialog(undefined);
+                }}
+              >
+                Amend
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
 

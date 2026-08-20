@@ -5,6 +5,13 @@ export type RefKind = 'head' | 'local' | 'remote' | 'tag';
 export type SignatureStatus = 'good' | 'bad' | 'unknown' | 'expired' | 'revoked' | 'error' | 'none';
 export type GitOperationState = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
 
+export interface StashEntry {
+  ref: string;
+  hash: CommitHash;
+  timestamp: number;
+  subject: string;
+}
+
 export interface RefLabel {
   fullName: string;
   shortName: string;

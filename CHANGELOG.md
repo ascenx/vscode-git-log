@@ -2,6 +2,17 @@
 
 All notable changes to Git Log are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added complete stash management with optional untracked files, stash listing, change previews, apply, pop, and confirmed drop.
+- Added HEAD amend with commit-message editing and staged-change inclusion.
+
+### Safety
+
+- Dropping a stash and amending HEAD require explicit confirmation.
+
 ## 0.0.5
 
 ### Changed
