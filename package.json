@@ -30,6 +30,7 @@
   ],
   "main": "./dist/extension.js",
   "activationEvents": [
+    "onStartupFinished",
     "onCommand:gitLogWorkbench.openLog",
     "onCommand:gitLogWorkbench.editor.showLineHistory",
     "onCommand:gitLogWorkbench.editor.showSelectionHistory",
@@ -128,6 +129,11 @@
           "type": "string",
           "default": "git",
           "description": "Path to the Git executable."
+        },
+        "gitLogWorkbench.currentLineBlame.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Show author, relative time, and commit information after the active editor line."
         },
         "gitLogWorkbench.repositories.scanDepth": {
           "type": "number",

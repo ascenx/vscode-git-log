@@ -204,6 +204,37 @@ describe('extension contributions', () => {
     expect(source).not.toContain('compareFileWithRef: () => {},');
   });
 
+  it('activates and wires current-line blame decorations for local editors', async () => {
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
+      activationEvents?: string[];
+      contributes?: {
+        configuration?: { properties?: Record<string, unknown> };
+      };
+    };
+    const source = await readFile('src/extension.ts', 'utf8');
+
+    expect(packageJson.activationEvents).toContain('onStartupFinished');
+    expect(packageJson.contributes?.configuration?.properties).toHaveProperty(
+      'gitLogWorkbench.currentLineBlame.enabled',
+    );
+    expect(source).toContain('new CurrentLineBlameController');
+    expect(source).toContain('createTextEditorDecorationType');
+    expect(source).toContain("new vscode.ThemeColor('editorGhostText.foreground')");
+    expect(source).not.toContain("new vscode.ThemeColor('editorCodeLens.foreground')");
+    expect(source).toContain('onDidChangeTextEditorSelection');
+    expect(source).toContain('onDidChangeActiveTextEditor');
+    expect(source).toContain('onDidChangeTextDocument');
+    expect(source).toContain('lineEditTimes');
+    expect(source).toContain('editTime:');
+    expect(source).toContain('MAX_DIRTY_BLAME_CHARACTERS');
+    expect(source).toContain('document.offsetAt');
+    expect(source).toContain('editor.viewColumn');
+    expect(source).not.toContain('editorSnapshot()?.key');
+    expect(source).toContain("getExtension<GitExtension>('vscode.git')");
+    expect(source).toContain('repository.state.onDidChange');
+    expect(source).toContain('currentLineBlame.invalidate()');
+  });
+
   it('returns editor-history command promises so VS Code waits for their tabs to open', async () => {
     const source = await readFile('src/extension.ts', 'utf8');
 
