@@ -18,6 +18,10 @@ import { FileHistoryEditor } from './editor/FileHistoryEditor';
 import { HistoryNativeDiffOpener } from './editor/HistoryNativeDiffOpener';
 import { HistoryPatchSyntaxHighlighter } from './editor/HistoryPatchSyntaxHighlighter';
 import { LineHistoryEditor } from './editor/LineHistoryEditor';
+import {
+  LineEditTimeTracker,
+  type SerializedLineEditTimeTracker,
+} from './editor/LineEditTimeTracker';
 import { ShikiHistoryCodeTokenizer } from './editor/ShikiHistoryCodeTokenizer';
 import { EditorGitContextService } from './editor/EditorGitContextService';
 import { EditorHistoryCommands } from './editor/EditorHistoryCommands';
@@ -33,11 +37,7 @@ import { WorkbenchViewProvider } from './webview/WorkbenchPanel';
 const MAX_DIRTY_BLAME_CHARACTERS = 2 * 1024 * 1024;
 const MAX_EDIT_TIME_DOCUMENTS = 50;
 const MAX_EDIT_TIME_LINES_PER_DOCUMENT = 500;
-
-interface LineEditTime {
-  text: string;
-  editTime: number;
-}
+const LINE_EDIT_TIME_STORAGE_KEY = 'gitLogWorkbench.currentLineBlame.editTimes';
 
 interface GitRepository {
   readonly state: {
@@ -54,6 +54,8 @@ interface GitApi {
 interface GitExtension {
   getAPI(version: 1): GitApi;
 }
+
+let flushLineEditTimesOnDeactivate: (() => Promise<void>) | undefined;
 
 export function activate(context: vscode.ExtensionContext): void {
   const output = vscode.window.createOutputChannel('Git Log');
@@ -86,7 +88,40 @@ export function activate(context: vscode.ExtensionContext): void {
       margin: '0 0 0 3em',
     },
   });
-  const lineEditTimes = new Map<string, Map<number, LineEditTime>>();
+  const lineEditTimes = new LineEditTimeTracker(
+    {
+      maximumDocuments: MAX_EDIT_TIME_DOCUMENTS,
+      maximumLines: MAX_EDIT_TIME_LINES_PER_DOCUMENT,
+      maximumLineCharacters: 16 * 1024,
+    },
+    context.workspaceState.get<SerializedLineEditTimeTracker>(LINE_EDIT_TIME_STORAGE_KEY),
+  );
+  let persistLineEditTimesTimer: ReturnType<typeof setTimeout> | undefined;
+  let pendingLineEditTimesWrite = Promise.resolve();
+  const writeLineEditTimes = (): Promise<void> => {
+    const state = lineEditTimes.serialize();
+    pendingLineEditTimesWrite = pendingLineEditTimesWrite
+      .catch(() => undefined)
+      .then(() => Promise.resolve(context.workspaceState.update(LINE_EDIT_TIME_STORAGE_KEY, state)));
+    return pendingLineEditTimesWrite;
+  };
+  const flushLineEditTimes = async (): Promise<void> => {
+    if (persistLineEditTimesTimer) clearTimeout(persistLineEditTimesTimer);
+    persistLineEditTimesTimer = undefined;
+    await writeLineEditTimes();
+  };
+  flushLineEditTimesOnDeactivate = flushLineEditTimes;
+  const persistLineEditTimes = (): void => {
+    if (persistLineEditTimesTimer) clearTimeout(persistLineEditTimesTimer);
+    persistLineEditTimesTimer = setTimeout(() => {
+      persistLineEditTimesTimer = undefined;
+      void writeLineEditTimes().catch((error: unknown) => {
+        output.appendLine(
+          `[line-blame] unable to persist edit times: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
+    }, 1_000);
+  };
   const editorKey = (editor: vscode.TextEditor): string => {
     const line = editor.selection.active.line;
     return `${editor.document.uri.toString()}:${String(editor.viewColumn ?? 0)}:${String(editor.document.version)}:${String(line)}`;
@@ -111,13 +146,13 @@ export function activate(context: vscode.ExtensionContext): void {
     }
     const line = editor.selection.active.line;
     const lineText = editor.document.lineAt(line).text;
-    const trackedEdit = lineEditTimes.get(editor.document.uri.toString())?.get(line);
+    const editTime = lineEditTimes.get(editor.document.uri.toString(), line, lineText);
     return {
       key: editorKey(editor),
       fsPath: editor.document.uri.fsPath,
       line,
       ...(editor.document.isDirty ? { workingContent: editor.document.getText() } : {}),
-      ...(trackedEdit?.text === lineText ? { editTime: trackedEdit.editTime } : {}),
+      ...(editTime !== undefined ? { editTime } : {}),
     };
   };
   const createBlameHover = (presentation: CurrentLineBlamePresentation): vscode.MarkdownString => {
@@ -167,6 +202,11 @@ export function activate(context: vscode.ExtensionContext): void {
         ]);
       },
       clear: clearLineBlame,
+      onError: (error) => {
+        output.appendLine(
+          `[line-blame] ${error instanceof Error ? error.message : String(error)}`,
+        );
+      },
       locale: vscode.env.language,
       now: () => Date.now(),
     },
@@ -182,6 +222,7 @@ export function activate(context: vscode.ExtensionContext): void {
   const gitRepositorySubscriptions = new Map<GitRepository, vscode.Disposable>();
   const gitApiSubscriptions: vscode.Disposable[] = [];
   let gitStateDisposed = false;
+  let gitStateInitialization: Promise<void> | undefined;
   const disposeGitStateSubscriptions = new vscode.Disposable(() => {
     gitStateDisposed = true;
     for (const disposable of gitApiSubscriptions.splice(0)) disposable.dispose();
@@ -193,30 +234,46 @@ export function activate(context: vscode.ExtensionContext): void {
     gitRepositorySubscriptions.set(
       repository,
       repository.state.onDidChange(() => {
+        lineBlameService.invalidate();
         currentLineBlame.invalidate();
         scheduleLineBlame(0);
       }),
     );
   };
-  void (async () => {
-    const extension = vscode.extensions.getExtension<GitExtension>('vscode.git');
-    if (!extension) return;
-    const exports = extension.isActive ? extension.exports : await extension.activate();
-    if (gitStateDisposed) return;
-    const api = exports.getAPI(1);
-    for (const repository of api.repositories) attachGitRepository(repository);
-    gitApiSubscriptions.push(
-      api.onDidOpenRepository(attachGitRepository),
-      api.onDidCloseRepository((repository) => {
-        gitRepositorySubscriptions.get(repository)?.dispose();
-        gitRepositorySubscriptions.delete(repository);
-      }),
-    );
-  })().catch((error: unknown) => {
-    output.appendLine(
-      `[git] unable to subscribe to repository changes: ${error instanceof Error ? error.message : String(error)}`,
-    );
-  });
+  const ensureGitStateSubscriptions = (): void => {
+    if (gitStateDisposed || gitStateInitialization) return;
+    gitStateInitialization = (async () => {
+      const extension = vscode.extensions.getExtension<GitExtension>('vscode.git');
+      if (!extension) return;
+      const exports = extension.isActive ? extension.exports : await extension.activate();
+      if (gitStateDisposed) return;
+      const api = exports.getAPI(1);
+      for (const repository of api.repositories) attachGitRepository(repository);
+      gitApiSubscriptions.push(
+        api.onDidOpenRepository((repository) => {
+          attachGitRepository(repository);
+          lineBlameService.invalidate();
+          currentLineBlame.invalidate();
+          scheduleLineBlame(0);
+        }),
+        api.onDidCloseRepository((repository) => {
+          gitRepositorySubscriptions.get(repository)?.dispose();
+          gitRepositorySubscriptions.delete(repository);
+          lineBlameService.invalidate();
+          currentLineBlame.invalidate();
+          scheduleLineBlame(0);
+        }),
+      );
+    })().catch((error: unknown) => {
+      gitStateInitialization = undefined;
+      output.appendLine(
+        `[git] unable to subscribe to repository changes: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    });
+  };
+  if (configuration.get<boolean>('currentLineBlame.enabled', true)) {
+    ensureGitStateSubscriptions();
+  }
   const workingSnapshots = new WorkingSnapshotContentProvider(
     maximumDiffFileBytes,
     maximumDiffFileBytes * 8,
@@ -327,6 +384,10 @@ export function activate(context: vscode.ExtensionContext): void {
     new vscode.Disposable(() => {
       if (lineBlameTimer) clearTimeout(lineBlameTimer);
     }),
+    new vscode.Disposable(() => {
+      if (persistLineEditTimesTimer) clearTimeout(persistLineEditTimesTimer);
+      persistLineEditTimesTimer = undefined;
+    }),
     currentLineBlame,
     lineBlameDecoration,
     fileComparisonEditor,
@@ -373,39 +434,39 @@ export function activate(context: vscode.ExtensionContext): void {
       if (event.textEditor === vscode.window.activeTextEditor) scheduleLineBlame();
     }),
     vscode.workspace.onDidChangeTextDocument((event) => {
-      if (event.document === vscode.window.activeTextEditor?.document) {
+      if (
+        event.document.uri.scheme === 'file' &&
+        configuration.get<boolean>('currentLineBlame.enabled', true)
+      ) {
+        const finalLine = event.document.lineAt(event.document.lineCount - 1);
+        if (
+          event.document.offsetAt(finalLine.rangeIncludingLineBreak.end) >
+          MAX_DIRTY_BLAME_CHARACTERS
+        ) {
+          if (event.document === vscode.window.activeTextEditor?.document) scheduleLineBlame(0);
+          return;
+        }
         const documentKey = event.document.uri.toString();
         const editTime = Date.now();
-        const editedLines = new Set<number>();
-        for (const change of event.contentChanges) {
-          const insertedLineCount = change.text.split(/\r\n|\r|\n/u).length;
-          for (let offset = 0; offset < insertedLineCount; offset += 1) {
-            editedLines.add(change.range.start.line + offset);
-          }
-        }
-        editedLines.add(vscode.window.activeTextEditor.selection.active.line);
-        const documentEdits = lineEditTimes.get(documentKey) ?? new Map<number, LineEditTime>();
-        lineEditTimes.delete(documentKey);
-        lineEditTimes.set(documentKey, documentEdits);
-        for (const line of editedLines) {
-          if (line < 0 || line >= event.document.lineCount) continue;
-          documentEdits.set(line, { text: event.document.lineAt(line).text, editTime });
-        }
-        while (documentEdits.size > MAX_EDIT_TIME_LINES_PER_DOCUMENT) {
-          const oldestLine = documentEdits.keys().next().value as number | undefined;
-          if (oldestLine === undefined) break;
-          documentEdits.delete(oldestLine);
-        }
-        while (lineEditTimes.size > MAX_EDIT_TIME_DOCUMENTS) {
-          const oldestDocument = lineEditTimes.keys().next().value as string | undefined;
-          if (!oldestDocument) break;
-          lineEditTimes.delete(oldestDocument);
-        }
-        scheduleLineBlame(300);
+        lineEditTimes.record({
+          documentKey,
+          lineCount: event.document.lineCount,
+          lineText: (line) => event.document.lineAt(line).text,
+          changes: event.contentChanges,
+          editTime,
+          ...(event.document === vscode.window.activeTextEditor?.document
+            ? { activeLine: vscode.window.activeTextEditor.selection.active.line }
+            : {}),
+        });
+        persistLineEditTimes();
+        if (event.document === vscode.window.activeTextEditor?.document) scheduleLineBlame(300);
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
       if (event.affectsConfiguration('gitLogWorkbench.currentLineBlame.enabled')) {
+        if (configuration.get<boolean>('currentLineBlame.enabled', true)) {
+          ensureGitStateSubscriptions();
+        }
         scheduleLineBlame(0);
       }
     }),
@@ -413,4 +474,8 @@ export function activate(context: vscode.ExtensionContext): void {
   scheduleLineBlame(0);
 }
 
-export function deactivate(): void {}
+export async function deactivate(): Promise<void> {
+  const flushLineEditTimes = flushLineEditTimesOnDeactivate;
+  flushLineEditTimesOnDeactivate = undefined;
+  await flushLineEditTimes?.();
+}

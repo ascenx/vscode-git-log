@@ -81,12 +81,15 @@ export class GitRunner {
         },
         stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
-
-      if (options.input !== undefined) child.stdin?.end(options.input);
-
+      let stdinError: Error | undefined;
       const stop = (): void => {
         if (!child.killed) child.kill();
       };
+      child.stdin?.on('error', (error: Error) => {
+        stdinError = error;
+        stop();
+      });
+      if (options.input !== undefined) child.stdin?.end(options.input);
 
       const abortListener = (): void => {
         cancelled = true;
@@ -217,7 +220,7 @@ export class GitRunner {
           return;
         }
 
-        if (code === 0 && !cancelled && !timedOut) {
+        if (code === 0 && !cancelled && !timedOut && !stdinError) {
           resolve({ stdout: stdoutBuffer, stderr: stderrBuffer, exitCode: code, durationMs });
           return;
         }
@@ -226,7 +229,9 @@ export class GitRunner {
           ? 'Git command was cancelled.'
           : timedOut
             ? 'Git command timed out.'
-            : `Git command exited with code ${String(code)}.`;
+            : stdinError
+              ? `Unable to write Git stdin: ${stdinError.message}`
+              : `Git command exited with code ${String(code)}.`;
         reject(
           new GitCommandError(
             reason,
@@ -237,6 +242,7 @@ export class GitRunner {
             stderrBuffer,
             cancelled,
             timedOut,
+            stdinError ? { cause: stdinError } : undefined,
           ),
         );
       });

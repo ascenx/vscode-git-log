@@ -47,6 +47,24 @@ describe('GitRunner', () => {
     });
   });
 
+  it('handles stdin EPIPE when the child exits before consuming a large input', async () => {
+    const { GitRunner } = await import('../../src/git/GitRunner');
+    const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-runner-'));
+    temporaryDirectories.push(cwd);
+    const runner = new GitRunner({ executable: process.execPath });
+
+    await expect(
+      runner.run(['-e', 'process.exit(7)'], {
+        cwd,
+        input: 'x'.repeat(128 * 1024),
+      }),
+    ).rejects.toMatchObject({
+      name: 'GitCommandError',
+      exitCode: 7,
+      cancelled: false,
+    });
+  });
+
   it('cancels an in-flight process using AbortSignal', async () => {
     const modulePath = '../../src/git/GitRunner';
     const runnerModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

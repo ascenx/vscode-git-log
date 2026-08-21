@@ -224,8 +224,8 @@ describe('extension contributions', () => {
     expect(source).toContain('onDidChangeTextEditorSelection');
     expect(source).toContain('onDidChangeActiveTextEditor');
     expect(source).toContain('onDidChangeTextDocument');
-    expect(source).toContain('lineEditTimes');
-    expect(source).toContain('editTime:');
+    expect(source).toContain('new LineEditTimeTracker');
+    expect(source).toContain('export async function deactivate(): Promise<void>');
     expect(source).toContain('MAX_DIRTY_BLAME_CHARACTERS');
     expect(source).toContain('document.offsetAt');
     expect(source).toContain('editor.viewColumn');
@@ -233,6 +233,7 @@ describe('extension contributions', () => {
     expect(source).toContain("getExtension<GitExtension>('vscode.git')");
     expect(source).toContain('repository.state.onDidChange');
     expect(source).toContain('currentLineBlame.invalidate()');
+    expect(source).toContain('lineBlameService.invalidate()');
   });
 
   it('returns editor-history command promises so VS Code waits for their tabs to open', async () => {

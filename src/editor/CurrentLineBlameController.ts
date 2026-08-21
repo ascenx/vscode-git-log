@@ -28,6 +28,7 @@ export interface CurrentLineBlameHost {
   getActiveEditor(): CurrentLineEditorSnapshot | undefined;
   render(editor: CurrentLineEditorSnapshot, presentation: CurrentLineBlamePresentation): void;
   clear?(): void;
+  onError?(error: unknown): void;
   readonly locale: string;
   now(): number;
 }
@@ -202,11 +203,20 @@ export class CurrentLineBlameController {
         if (cachedMessage !== undefined) {
           message = cachedMessage;
         } else {
-          message = await this.commits.getCommitMessage(
-            context.repositoryRoot,
-            blame.hash,
-            request.signal,
-          );
+          this.renderPresentation(editor, blame, message);
+          try {
+            message = await this.commits.getCommitMessage(
+              context.repositoryRoot,
+              blame.hash,
+              request.signal,
+            );
+          } catch (error) {
+            if (generation === this.generation && !request.signal.aborted) {
+              this.activeEditorKey = undefined;
+              this.host.onError?.(error);
+            }
+            return;
+          }
           if (generation !== this.generation || request.signal.aborted) return;
           this.commitMessages.set(blame.hash, message);
           while (this.commitMessages.size > MAX_CACHED_COMMIT_MESSAGES) {
@@ -219,10 +229,11 @@ export class CurrentLineBlameController {
 
       if (generation !== this.generation || request.signal.aborted) return;
       this.renderPresentation(editor, blame, message);
-    } catch {
+    } catch (error) {
       if (generation === this.generation && !request.signal.aborted) {
         this.activeEditorKey = undefined;
         this.host.clear?.();
+        this.host.onError?.(error);
       }
     }
   }
@@ -232,6 +243,7 @@ export class CurrentLineBlameController {
     this.activeEditorKey = undefined;
     this.activeRequest?.abort();
     this.activeRequest = undefined;
+    this.editorContexts.clear();
     this.clearPresentationTimer();
     this.host.clear?.();
   }

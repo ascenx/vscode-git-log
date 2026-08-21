@@ -133,7 +133,7 @@
         "gitLogWorkbench.currentLineBlame.enabled": {
           "type": "boolean",
           "default": true,
-          "description": "Show author, relative time, and commit information after the active editor line."
+          "description": "Show author, relative time, and commit information after the active editor line. Uncommitted edit times are tracked from document changes and retained in workspace state."
         },
         "gitLogWorkbench.repositories.scanDepth": {
           "type": "number",

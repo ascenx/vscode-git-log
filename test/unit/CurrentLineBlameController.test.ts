@@ -78,6 +78,94 @@ describe('CurrentLineBlameController', () => {
     );
   });
 
+  it('renders the inline subject before the full commit message finishes loading', async () => {
+    const { CurrentLineBlameController } =
+      await import('../../src/editor/CurrentLineBlameController');
+    let resolveMessage: ((message: string) => void) | undefined;
+    const message = new Promise<string>((resolve) => {
+      resolveMessage = resolve;
+    });
+    const render = vi.fn();
+    const controller = new CurrentLineBlameController(
+      { resolve: vi.fn().mockResolvedValue(context) } as unknown as EditorGitContextService,
+      { getLineBlame: vi.fn().mockResolvedValue(blame) } as unknown as LineBlameService,
+      { getCommitMessage: vi.fn().mockReturnValue(message) } as unknown as GitService,
+      {
+        getActiveEditor: () => ({
+          key: 'editor:eager',
+          fsPath: context.absolutePath,
+          line: 1,
+        }),
+        render,
+        locale: 'en',
+        now: () => 1787250547000,
+      },
+    );
+
+    const refresh = controller.refresh();
+    await vi.waitFor(() => expect(render).toHaveBeenCalledTimes(1));
+    expect(render).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ message: blame.subject }),
+    );
+
+    resolveMessage?.('complete commit message');
+    await refresh;
+
+    expect(render).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ message: 'complete commit message' }),
+    );
+  });
+
+  it('keeps inline blame visible when loading the full commit message fails', async () => {
+    const { CurrentLineBlameController } =
+      await import('../../src/editor/CurrentLineBlameController');
+    const messageError = new Error('commit message unavailable');
+    const render = vi.fn();
+    const onError = vi.fn();
+    const getCommitMessage = vi
+      .fn()
+      .mockRejectedValueOnce(messageError)
+      .mockResolvedValueOnce('complete commit message');
+    const controller = new CurrentLineBlameController(
+      { resolve: vi.fn().mockResolvedValue(context) } as unknown as EditorGitContextService,
+      { getLineBlame: vi.fn().mockResolvedValue(blame) } as unknown as LineBlameService,
+      {
+        getCommitMessage,
+      } as unknown as GitService,
+      {
+        getActiveEditor: () => ({
+          key: 'editor:message-error',
+          fsPath: context.absolutePath,
+          line: 1,
+        }),
+        render,
+        onError,
+        locale: 'en',
+        now: () => 1787250547000,
+      },
+    );
+
+    await controller.refresh();
+
+    expect(render).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ message: blame.subject }),
+    );
+    expect(onError).toHaveBeenCalledWith(messageError);
+
+    await controller.refresh();
+
+    expect(getCommitMessage).toHaveBeenCalledTimes(2);
+    expect(render).toHaveBeenLastCalledWith(
+      expect.anything(),
+      expect.objectContaining({ message: 'complete commit message' }),
+    );
+  });
+
   it('does not load a commit message for an uncommitted line', async () => {
     const { CurrentLineBlameController } =
       await import('../../src/editor/CurrentLineBlameController');
@@ -238,16 +326,17 @@ describe('CurrentLineBlameController', () => {
     await controller.refresh();
 
     expect(getLineBlame).toHaveBeenCalledTimes(1);
-    expect(render).toHaveBeenCalledTimes(1);
+    expect(render).toHaveBeenCalledTimes(2);
   });
 
   it('reloads the same line after repository state invalidation', async () => {
     const { CurrentLineBlameController } =
       await import('../../src/editor/CurrentLineBlameController');
     const getLineBlame = vi.fn().mockResolvedValue(blame);
+    const resolve = vi.fn().mockResolvedValue(context);
     const controller = new CurrentLineBlameController(
       {
-        resolve: vi.fn().mockResolvedValue(context),
+        resolve,
       } as unknown as EditorGitContextService,
       { getLineBlame } as unknown as LineBlameService,
       {
@@ -270,6 +359,36 @@ describe('CurrentLineBlameController', () => {
     await controller.refresh();
 
     expect(getLineBlame).toHaveBeenCalledTimes(2);
+    expect(resolve).toHaveBeenCalledTimes(2);
+  });
+
+  it('reports non-cancellation refresh failures to the host', async () => {
+    const { CurrentLineBlameController } =
+      await import('../../src/editor/CurrentLineBlameController');
+    const error = new Error('repository lookup failed');
+    const onError = vi.fn();
+    const controller = new CurrentLineBlameController(
+      {
+        resolve: vi.fn().mockRejectedValue(error),
+      } as unknown as EditorGitContextService,
+      { getLineBlame: vi.fn() } as unknown as LineBlameService,
+      { getCommitMessage: vi.fn() } as unknown as GitService,
+      {
+        getActiveEditor: () => ({
+          key: 'editor:error',
+          fsPath: context.absolutePath,
+          line: 1,
+        }),
+        render: vi.fn(),
+        onError,
+        locale: 'en',
+        now: () => 1787250547000,
+      },
+    );
+
+    await controller.refresh();
+
+    expect(onError).toHaveBeenCalledWith(error);
   });
 
   it('drops stale blame results after the cursor moves', async () => {
@@ -308,12 +427,12 @@ describe('CurrentLineBlameController', () => {
     resolveFirst?.(blame);
     await staleRefresh;
 
-    expect(render).toHaveBeenCalledTimes(1);
-    expect(render).toHaveBeenCalledWith(
-      expect.objectContaining({ key: 'editor:1:line2' }),
-      expect.objectContaining({
-        contentText: expect.stringContaining('second line'),
-      }),
-    );
+    expect(render).toHaveBeenCalledTimes(2);
+    for (const [renderedEditor, presentation] of render.mock.calls) {
+      expect(renderedEditor).toEqual(expect.objectContaining({ key: 'editor:1:line2' }));
+      expect(presentation).toEqual(
+        expect.objectContaining({ contentText: expect.stringContaining('second line') }),
+      );
+    }
   });
 });
