@@ -2,12 +2,19 @@
 
 All notable changes to Git Log are documented in this file.
 
-## Unreleased
+## 0.0.6
 
 ### Added
 
+- Added theme-aware current-line blame annotations with author, relative time, and commit subject, plus full author, timestamp, hash, and message details on hover.
+- Added edit-age tracking for uncommitted lines, retained across editor tab switches and extension restarts.
 - Added complete stash management with optional untracked files, stash listing, change previews, apply, pop, and confirmed drop.
 - Added HEAD amend with commit-message editing and staged-change inclusion.
+
+### Fixed
+
+- Improved current-line blame for unsaved and unstaged changes, modified renames, case-only renames, large edits, and Git stdin failures.
+- Prevented commit and reference context menus from extending beyond the visible viewport.
 
 ### Safety
 
