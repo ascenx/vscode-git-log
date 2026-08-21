@@ -944,6 +944,23 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.stash-tool-row button {
+  min-height: 27px;
+  padding: 3px 12px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 3px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+}
+
+.stash-tool-row button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.stash-tool-row button:disabled {
+  opacity: 0.55;
+}
+
 .stash-message-input {
   min-width: 0;
   width: 100%;

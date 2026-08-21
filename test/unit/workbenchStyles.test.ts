@@ -176,6 +176,18 @@ describe('workbench styles', () => {
     );
   });
 
+  it('uses VS Code secondary button colors for stash actions', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.stash-tool-row button\s*\{[^}]*border:\s*1px solid var\(--vscode-button-border, transparent\);[^}]*background:\s*var\(--vscode-button-secondaryBackground\);[^}]*color:\s*var\(--vscode-button-secondaryForeground\);/su,
+    );
+    expect(styles).toMatch(
+      /\.stash-tool-row button:hover:not\(:disabled\)\s*\{[^}]*background:\s*var\(--vscode-button-secondaryHoverBackground\);/su,
+    );
+    expect(styles).toMatch(/\.stash-tool-row button:disabled\s*\{[^}]*opacity:\s*0\.55;/su);
+  });
+
   it('uses a wider stash dialog with a top-right close button and no horizontal scrolling', async () => {
     const styles = await readFile('webview/src/styles.css', 'utf8');
     const app = await readFile('webview/src/App.tsx', 'utf8');
