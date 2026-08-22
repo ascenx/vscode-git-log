@@ -12,7 +12,6 @@ import {
 import {
   layoutCommitGraph,
   type GraphContinuationState,
-  type GraphLayoutResult,
 } from '../../src/graph/layoutCommitGraph';
 import {
   parseWebviewMessage,
@@ -34,11 +33,11 @@ import type {
   StashEntry,
 } from '../../src/shared/models';
 import { getVsCodeApi } from './vscodeApi';
-import { CommitGraphCell } from './CommitGraphCell';
-import { getVirtualRange } from './virtualRange';
 import { buildFileTree, type FileTreeNode } from './buildFileTree';
 import { buildRefTree, type RefTreeNode } from './buildRefTree';
 import { advanceCommitWindow } from './commitWindow';
+import { CommitList } from './CommitList';
+import { formatCommitDate } from './formatCommitDate';
 
 const refGroups: readonly { label: string; kind: RefKind }[] = [
   { label: 'Local', kind: 'local' },
@@ -182,16 +181,6 @@ function contextMenuPosition(x: number, y: number): CSSProperties {
   return { ...horizontal, ...vertical };
 }
 
-function formatDate(timestamp: number): string {
-  if (!timestamp) return '';
-  return new Intl.DateTimeFormat(undefined, {
-    month: 'short',
-    day: 'numeric',
-    hour: '2-digit',
-    minute: '2-digit',
-  }).format(new Date(timestamp * 1000));
-}
-
 function changedFileStatusLabel(status: ChangedFile['status']): string {
   return (
     {
@@ -217,234 +206,6 @@ function readScrollTopByRepository(value: unknown): Record<string, number> {
     return { ...(value.scrollTopByRepository as Record<string, number>) };
   }
   return {};
-}
-
-interface CommitListProps {
-  commits: CommitSummary[];
-  graphLayout: GraphLayoutResult;
-  selectedHashes: ReadonlySet<string>;
-  headHash: string | undefined;
-  hasMore: boolean;
-  loading: boolean;
-  initialScrollTop: number;
-  horizontalScrollResetKey: string;
-  onScrollTopChange(scrollTop: number): void;
-  onHorizontalScroll(scrollLeft: number): void;
-  onSelect(commit: CommitSummary, extend: boolean, toggle?: boolean): void;
-  onContextMenu(commit: CommitSummary, x: number, y: number): void;
-  onLoadMore(): void;
-}
-
-function CommitList({
-  commits,
-  graphLayout,
-  selectedHashes,
-  headHash,
-  hasMore,
-  loading,
-  initialScrollTop,
-  horizontalScrollResetKey,
-  onScrollTopChange,
-  onHorizontalScroll,
-  onSelect,
-  onContextMenu,
-  onLoadMore,
-}: CommitListProps) {
-  const viewportRef = useRef<HTMLDivElement>(null);
-  const [scrollTop, setScrollTop] = useState(0);
-  const [viewportHeight, setViewportHeight] = useState(560);
-  const rowHeight = 28;
-  const range = getVirtualRange({
-    itemCount: commits.length,
-    rowHeight,
-    scrollTop,
-    viewportHeight,
-    overscan: 8,
-  });
-
-  const focusCommit = (index: number): void => {
-    const viewport = viewportRef.current;
-    const target = commits[index];
-    if (!viewport || !target) return;
-    const top = index * rowHeight;
-    if (top < viewport.scrollTop || top + rowHeight > viewport.scrollTop + viewportHeight) {
-      viewport.scrollTop = Math.max(0, top - Math.floor(viewportHeight / 2));
-      setScrollTop(viewport.scrollTop);
-    }
-    const focus = (): void => {
-      viewport.querySelector<HTMLElement>(`[data-commit-hash="${target.hash}"]`)?.focus();
-    };
-    focus();
-    window.requestAnimationFrame(focus);
-  };
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    const updateHeight = (): void => setViewportHeight(viewport.clientHeight || 560);
-    updateHeight();
-    if (typeof ResizeObserver === 'undefined') return;
-    const observer = new ResizeObserver(updateHeight);
-    observer.observe(viewport);
-    return () => observer.disconnect();
-  }, []);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    viewport.scrollTop = initialScrollTop;
-    setScrollTop(initialScrollTop);
-  }, [initialScrollTop]);
-
-  useEffect(() => {
-    const viewport = viewportRef.current;
-    if (!viewport) return;
-    viewport.scrollLeft = 0;
-    onHorizontalScroll(0);
-    return () => onHorizontalScroll(0);
-  }, [horizontalScrollResetKey, onHorizontalScroll]);
-
-
-  return (
-    <div
-      className="commit-viewport"
-      ref={viewportRef}
-      onScroll={(event) => {
-        const viewport = event.currentTarget;
-        setScrollTop(viewport.scrollTop);
-        onScrollTopChange(viewport.scrollTop);
-        onHorizontalScroll(viewport.scrollLeft);
-        if (
-          hasMore &&
-          !loading &&
-          viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - rowHeight * 5
-        ) {
-          onLoadMore();
-        }
-      }}
-    >
-      <div
-        className="commit-list"
-        role="rowgroup"
-        style={{ height: commits.length * rowHeight + (hasMore ? 32 : 0) }}
-      >
-        {commits.slice(range.start, range.end).map((commit, visibleIndex) => {
-          const index = range.start + visibleIndex;
-          const graphRow = graphLayout.rows[index];
-          return (
-            <div
-              className={`commit-row${selectedHashes.has(commit.hash) ? ' selected' : ''}${
-                headHash === commit.hash ? ' head-row' : ''
-              }`}
-              style={{ top: index * rowHeight }}
-              role="row"
-              aria-rowindex={index + 2}
-              aria-selected={selectedHashes.has(commit.hash)}
-              data-commit-hash={commit.hash}
-              tabIndex={0}
-              key={commit.hash}
-              onClick={(event) =>
-                onSelect(commit, event.shiftKey, event.ctrlKey || event.metaKey)
-              }
-              onContextMenu={(event) => {
-                event.preventDefault();
-                onContextMenu(commit, event.clientX, event.clientY);
-              }}
-              onKeyDown={(event) => {
-                let targetIndex: number | undefined;
-                if (event.key === 'ArrowUp') targetIndex = Math.max(0, index - 1);
-                if (event.key === 'ArrowDown') targetIndex = Math.min(commits.length - 1, index + 1);
-                if (event.key === 'PageUp') {
-                  targetIndex = Math.max(0, index - Math.max(1, Math.floor(viewportHeight / rowHeight)));
-                }
-                if (event.key === 'PageDown') {
-                  targetIndex = Math.min(
-                    commits.length - 1,
-                    index + Math.max(1, Math.floor(viewportHeight / rowHeight)),
-                  );
-                }
-                if (event.key === 'Home') targetIndex = 0;
-                if (event.key === 'End') {
-                  targetIndex = commits.length - 1;
-                  if (hasMore) onLoadMore();
-                }
-                if (targetIndex !== undefined) {
-                  event.preventDefault();
-                  const target = commits[targetIndex];
-                  if (target) {
-                    onSelect(target, event.shiftKey);
-                    focusCommit(targetIndex);
-                  }
-                } else if (event.key === 'Enter' || event.key === ' ') {
-                  onSelect(commit, event.shiftKey);
-                }
-              }}
-            >
-              <span className="commit-subject-cell" role="gridcell">
-                {graphRow ? (
-                  <CommitGraphCell row={graphRow} maxLaneCount={graphLayout.maxLaneCount} />
-                ) : null}
-                <span className="commit-subject">{commit.subject}</span>
-                {'oldPath' in commit &&
-                (commit as HistoryEntry).oldPath &&
-                (commit as HistoryEntry).oldPath !== (commit as HistoryEntry).path ? (
-                  <span
-                    className="history-rename"
-                    title={`${(commit as HistoryEntry).oldPath ?? ''} → ${(commit as HistoryEntry).path}`}
-                  >
-                    {(commit as HistoryEntry).oldPath} → {(commit as HistoryEntry).path}
-                  </span>
-                ) : null}
-                {'binary' in commit ? (
-                  <span className="history-stats">
-                    {(commit as HistoryEntry).binary ? (
-                      <span className="history-stat-binary">Binary</span>
-                    ) : (
-                      <>
-                        {(commit as HistoryEntry).additions !== undefined ? (
-                          <span className="file-stat-additions">
-                            +{String((commit as HistoryEntry).additions)}
-                          </span>
-                        ) : null}
-                        {(commit as HistoryEntry).deletions !== undefined ? (
-                          <span className="file-stat-deletions">
-                            −{String((commit as HistoryEntry).deletions)}
-                          </span>
-                        ) : null}
-                      </>
-                    )}
-                  </span>
-                ) : null}
-              </span>
-              <span className="commit-author" role="gridcell" title={commit.authorEmail}>
-                {commit.authorName}
-              </span>
-              <span className="commit-date" role="gridcell">
-                {formatDate(commit.commitTime)}
-              </span>
-              <span className="commit-refs" role="gridcell">
-                {commit.refs.map((ref) => (
-                  <span className={`ref-label ${ref.kind}`} key={ref.fullName}>
-                    {ref.shortName}
-                  </span>
-                ))}
-              </span>
-            </div>
-          );
-        })}
-        {hasMore ? (
-          <button
-            type="button"
-            className="load-more"
-            style={{ top: commits.length * rowHeight }}
-            onClick={onLoadMore}
-          >
-            {loading ? 'Loading…' : 'Load more commits'}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
 }
 
 function ChangedFileRow({
@@ -722,6 +483,9 @@ export function App() {
   >(undefined);
   const scrollPersistTimer = useRef<number | undefined>(undefined);
   const scrollTopByRepositoryRef = useRef(scrollTopByRepository);
+  const pendingScrollPosition = useRef<
+    { repositoryId: string; scrollTop: number } | undefined
+  >(undefined);
   const previousWindowOffsetByRepository = useRef<Map<string, number>>(new Map());
   const lastWindowAnchorSignature = useRef<string | undefined>(undefined);
   const historyParentChoices = useRef<Map<string, string>>(new Map());
@@ -764,6 +528,15 @@ export function App() {
         .some((value) => value.toLocaleLowerCase().includes(query)),
     );
   }, [refSearch, state.refs]);
+  const refGroupTrees = useMemo(
+    () =>
+      refGroups.map((group) => {
+        const refs = visibleRefs.filter((ref) => ref.kind === group.kind);
+        return { group, refs, tree: buildRefTree(refs) };
+      }),
+    [visibleRefs],
+  );
+  const fileTree = useMemo(() => buildFileTree(state.files), [state.files]);
   const headMatchesRefSearch = useMemo(() => {
     const query = refSearch.trim().toLocaleLowerCase();
     if (!query) return true;
@@ -925,7 +698,11 @@ export function App() {
   }, []);
 
   useEffect(() => {
-    scrollTopByRepositoryRef.current = scrollTopByRepository;
+    const pending = pendingScrollPosition.current;
+    scrollTopByRepositoryRef.current = {
+      ...scrollTopByRepository,
+      ...(pending ? { [pending.repositoryId]: pending.scrollTop } : {}),
+    };
   }, [scrollTopByRepository]);
 
   useEffect(() => {
@@ -968,6 +745,8 @@ export function App() {
       scrollTop = Math.max(0, scrollTop - (state.startLogOffset - previousOffset) * 28);
       setScrollTopByRepository((current) => {
         const next = { ...current, [repositoryId]: scrollTop };
+        scrollTopByRepositoryRef.current = next;
+        pendingScrollPosition.current = undefined;
         vscode.setState({ scrollTopByRepository: next });
         return next;
       });
@@ -1087,6 +866,10 @@ export function App() {
           if (message.replace && message.scrollTop !== undefined) {
             setScrollTopByRepository((current) => {
               const next = { ...current, [message.repositoryId]: message.scrollTop ?? 0 };
+              scrollTopByRepositoryRef.current = next;
+              if (pendingScrollPosition.current?.repositoryId === message.repositoryId) {
+                pendingScrollPosition.current = undefined;
+              }
               vscode.setState({ scrollTopByRepository: next });
               return next;
             });
@@ -1448,6 +1231,40 @@ export function App() {
     vscode.postMessage(message);
   };
 
+  const handleCommitScrollTopChange = useCallback(
+    (scrollTop: number): void => {
+      if (state.history || !state.selectedRepositoryId) return;
+      const repositoryId = state.selectedRepositoryId;
+      scrollTopByRepositoryRef.current = {
+        ...scrollTopByRepositoryRef.current,
+        [repositoryId]: scrollTop,
+      };
+      pendingScrollPosition.current = { repositoryId, scrollTop };
+      if (scrollPersistTimer.current !== undefined) {
+        window.clearTimeout(scrollPersistTimer.current);
+      }
+      scrollPersistTimer.current = window.setTimeout(() => {
+        scrollPersistTimer.current = undefined;
+        const next = scrollTopByRepositoryRef.current;
+        pendingScrollPosition.current = undefined;
+        setScrollTopByRepository(next);
+        vscode.setState({ scrollTopByRepository: next });
+        const logWindow = logWindowRef.current;
+        vscode.postMessage({
+          type: 'updateScrollAnchor',
+          requestId: requestId('scroll'),
+          repositoryId,
+          scrollTop,
+          logOffset: logWindow.startLogOffset,
+          ...(logWindow.graphContinuation
+            ? { graphContinuation: logWindow.graphContinuation }
+            : {}),
+        });
+      }, 200);
+    },
+    [state.history, state.selectedRepositoryId, vscode],
+  );
+
   const applyFilters = (filters: LogFilters, debounce = false): void => {
     setState((current) => ({ ...current, filters }));
     if (filterTimer.current !== undefined) {
@@ -1459,6 +1276,8 @@ export function App() {
     pendingFiltersRef.current = { repositoryId, filters };
     setScrollTopByRepository((current) => {
       const next = { ...current, [repositoryId]: 0 };
+      scrollTopByRepositoryRef.current = next;
+      pendingScrollPosition.current = undefined;
       vscode.setState({ scrollTopByRepository: next });
       return next;
     });
@@ -1506,6 +1325,11 @@ export function App() {
       filterTimer.current = undefined;
     }
     pendingFiltersRef.current = undefined;
+    if (scrollPersistTimer.current !== undefined) {
+      window.clearTimeout(scrollPersistTimer.current);
+      scrollPersistTimer.current = undefined;
+    }
+    pendingScrollPosition.current = undefined;
     setContextMenu(undefined);
     setNamedOperation(undefined);
     setFilterPopup(undefined);
@@ -2618,10 +2442,8 @@ export function App() {
                 </button>
               ) : null}
             </section>
-            {refGroups.map((group) => {
-              const refs = visibleRefs.filter((ref) => ref.kind === group.kind);
+            {refGroupTrees.map(({ group, refs, tree }) => {
               const collapsed = !refSearchActive && collapsedRefGroups.has(group.kind);
-              const tree = buildRefTree(refs);
               return (
                 <section className="ref-group" key={group.kind}>
                   <button
@@ -2808,31 +2630,12 @@ export function App() {
                   ? (scrollTopByRepository[state.selectedRepositoryId] ?? 0)
                   : 0
               }
-              onScrollTopChange={(scrollTop) => {
-                if (state.history || !state.selectedRepositoryId) return;
-                const repositoryId = state.selectedRepositoryId;
-                setScrollTopByRepository((current) => {
-                  const next = { ...current, [repositoryId]: scrollTop };
-                  vscode.setState({ scrollTopByRepository: next });
-                  return next;
-                });
-                if (scrollPersistTimer.current !== undefined) {
-                  window.clearTimeout(scrollPersistTimer.current);
-                }
-                scrollPersistTimer.current = window.setTimeout(() => {
-                  const logWindow = logWindowRef.current;
-                  send({
-                    type: 'updateScrollAnchor',
-                    requestId: requestId('scroll'),
-                    repositoryId,
-                    scrollTop,
-                    logOffset: logWindow.startLogOffset,
-                    ...(logWindow.graphContinuation
-                      ? { graphContinuation: logWindow.graphContinuation }
-                      : {}),
-                  });
-                }, 200);
-              }}
+              scrollAnchorKey={
+                state.history
+                  ? `history:${state.history.repositoryId}:${state.history.path}`
+                  : `log:${state.selectedRepositoryId ?? ''}:${String(state.startLogOffset)}`
+              }
+              onScrollTopChange={handleCommitScrollTopChange}
               onHorizontalScroll={syncLogHeaderScroll}
               onSelect={selectCommit}
               onContextMenu={(commit, x, y) => {
@@ -2966,7 +2769,7 @@ export function App() {
               <div className="file-list-content">
                 {state.layout.filesViewMode === 'tree' ? (
                   <FileTreeNodes
-                    nodes={buildFileTree(state.files)}
+                    nodes={fileTree}
                     depth={0}
                     onOpen={openDiff}
                     onSelect={(file) => setState((current) => ({ ...current, selectedFile: file }))}
@@ -3099,11 +2902,11 @@ export function App() {
             </div>
             <div className="details-meta">
               <span>Author: {state.details.authorName} &lt;{state.details.authorEmail}&gt;</span>
-              <span>Authored: {formatDate(state.details.authorTime)}</span>
+              <span>Authored: {formatCommitDate(state.details.authorTime)}</span>
               <span>
                 Committer: {state.details.committerName} &lt;{state.details.committerEmail}&gt;
               </span>
-              <span>Committed: {formatDate(state.details.commitTime)}</span>
+              <span>Committed: {formatCommitDate(state.details.commitTime)}</span>
               <span className="details-hash">
                 <code>{state.details.hash}</code>
                 <button

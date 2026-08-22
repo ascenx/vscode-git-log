@@ -21,6 +21,8 @@ export interface GitRunResult {
 export interface GitRunnerOptions {
   executable?: string;
   logLevel?: 'off' | 'error' | 'debug';
+  defaultMaxStdoutBytes?: number;
+  killGraceMs?: number;
   onDiagnostic?(line: string): void;
 }
 
@@ -43,14 +45,27 @@ export class GitCommandError extends Error {
 }
 
 export class GitRunner {
+  private static readonly DEFAULT_MAX_STDOUT_BYTES = 64 * 1024 * 1024;
   private static readonly DEFAULT_MAX_STDERR_BYTES = 4 * 1024 * 1024;
+  private static readonly DEFAULT_KILL_GRACE_MS = 1_000;
   private readonly executable: string;
   private readonly logLevel: 'off' | 'error' | 'debug';
+  private readonly defaultMaxStdoutBytes: number;
+  private readonly killGraceMs: number;
   private readonly onDiagnostic: ((line: string) => void) | undefined;
 
   constructor(options: GitRunnerOptions = {}) {
     this.executable = options.executable ?? 'git';
     this.logLevel = options.logLevel ?? 'off';
+    this.defaultMaxStdoutBytes =
+      options.defaultMaxStdoutBytes ?? GitRunner.DEFAULT_MAX_STDOUT_BYTES;
+    this.killGraceMs = options.killGraceMs ?? GitRunner.DEFAULT_KILL_GRACE_MS;
+    if (!Number.isSafeInteger(this.defaultMaxStdoutBytes) || this.defaultMaxStdoutBytes < 1) {
+      throw new Error('Git default stdout limit must be a positive integer.');
+    }
+    if (!Number.isSafeInteger(this.killGraceMs) || this.killGraceMs < 1) {
+      throw new Error('Git kill grace period must be a positive integer.');
+    }
     this.onDiagnostic = options.onDiagnostic;
   }
 
@@ -67,12 +82,14 @@ export class GitRunner {
       let stderrBytes = 0;
       let stderrLimitExceeded = false;
       const command = args[0] ?? 'unknown';
+      const maximumStdoutBytes = options.maxStdoutBytes ?? this.defaultMaxStdoutBytes;
       if (this.logLevel === 'debug') this.onDiagnostic?.(`[git] start command=${command}`);
 
       const child = spawn(this.executable, [...args], {
         cwd: options.cwd,
         shell: false,
         windowsHide: true,
+        detached: process.platform !== 'win32',
         env: {
           ...process.env,
           GIT_PAGER: 'cat',
@@ -82,8 +99,22 @@ export class GitRunner {
         stdio: [options.input === undefined ? 'ignore' : 'pipe', 'pipe', 'pipe'],
       });
       let stdinError: Error | undefined;
+      let forceKillTimer: ReturnType<typeof setTimeout> | undefined;
+      const processGroupId = process.platform !== 'win32' ? child.pid : undefined;
+      const terminate = (signal: NodeJS.Signals): void => {
+        if (processGroupId !== undefined) {
+          try {
+            process.kill(-processGroupId, signal);
+            return;
+          } catch {
+            // Fall back to terminating the direct child if its process group is already unavailable.
+          }
+        }
+        if (child.exitCode === null && child.signalCode === null) child.kill(signal);
+      };
       const stop = (): void => {
-        if (!child.killed) child.kill();
+        terminate('SIGTERM');
+        forceKillTimer ??= setTimeout(() => terminate('SIGKILL'), this.killGraceMs);
       };
       child.stdin?.on('error', (error: Error) => {
         stdinError = error;
@@ -109,9 +140,8 @@ export class GitRunner {
       child.stdout?.on('data', (chunk: Buffer | string) => {
         if (stdoutLimitExceeded) return;
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
-        const maximumBytes = options.maxStdoutBytes;
-        if (maximumBytes !== undefined && stdoutBytes + buffer.length > maximumBytes) {
-          const remaining = Math.max(0, maximumBytes - stdoutBytes);
+        if (stdoutBytes + buffer.length > maximumStdoutBytes) {
+          const remaining = Math.max(0, maximumStdoutBytes - stdoutBytes);
           if (remaining > 0) stdout.push(buffer.subarray(0, remaining));
           stdoutBytes += remaining;
           stdoutLimitExceeded = true;
@@ -141,6 +171,7 @@ export class GitRunner {
         if (settled) return;
         settled = true;
         if (timeout) clearTimeout(timeout);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         options.signal?.removeEventListener('abort', abortListener);
         const safeMessage = redactGitDiagnostic(error.message)
           .split(options.cwd)
@@ -167,6 +198,7 @@ export class GitRunner {
         if (settled) return;
         settled = true;
         if (timeout) clearTimeout(timeout);
+        if (forceKillTimer) clearTimeout(forceKillTimer);
         options.signal?.removeEventListener('abort', abortListener);
 
         const stdoutBuffer = Buffer.concat(stdout);
@@ -191,7 +223,7 @@ export class GitRunner {
         if (stdoutLimitExceeded) {
           reject(
             new GitCommandError(
-              `Git stdout exceeded ${String(options.maxStdoutBytes)} bytes.`,
+              `Git stdout exceeded ${String(maximumStdoutBytes)} bytes.`,
               args,
               options.cwd,
               code,

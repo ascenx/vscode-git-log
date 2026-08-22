@@ -21,6 +21,39 @@ afterEach(async () => {
 });
 
 describe('FileHistoryService', () => {
+  it('extends a cached file history by rescanning from HEAD without Git skip', async () => {
+    const head = 'f'.repeat(40);
+    const records = Array.from({ length: 5 }, (_, index) => {
+      const hash = (index + 1).toString(16).padStart(40, '0');
+      const parent = index === 4 ? '' : (index + 2).toString(16).padStart(40, '0');
+      return `\x1e${[hash, parent, 'Alice', 'alice@example.com', '1', '2', `commit ${String(index + 1)}`, ''].join('\0')}\0\n1\t0\tapp.txt\0`;
+    });
+    const run = vi.fn(async (args: readonly string[]) => {
+      if (args.includes('rev-parse')) {
+        return { stdout: Buffer.from(`${head}\n`), stderr: Buffer.alloc(0) };
+      }
+      const maximum = Number(
+        args.find((argument) => argument.startsWith('--max-count='))?.split('=')[1] ?? 0,
+      );
+      return {
+        stdout: Buffer.from(records.slice(0, maximum).join('')),
+        stderr: Buffer.alloc(0),
+      };
+    });
+    const { FileHistoryService } = await import('../../src/git/FileHistoryService');
+    const service = new FileHistoryService({ run } as unknown as GitRunner);
+
+    const first = await service.getFileHistory('/repo', 'app.txt', [], { limit: 2, skip: 0 });
+    const second = await service.getFileHistory('/repo', 'app.txt', [], { limit: 2, skip: 2 });
+
+    expect(first.map((entry) => entry.subject)).toEqual(['commit 1', 'commit 2']);
+    expect(second.map((entry) => entry.subject)).toEqual(['commit 3', 'commit 4']);
+    const logCalls = run.mock.calls.filter(([args]) => args.includes('log'));
+    expect(logCalls).toHaveLength(2);
+    expect(logCalls[1]?.[0].some((argument) => argument.startsWith('--skip='))).toBe(false);
+    expect(logCalls[1]?.[0]).toContain('--max-count=4');
+  });
+
   it('scans past filtered metadata records without truncating ordinary commit pagination', async () => {
     const head = 'f'.repeat(40);
     const metadata = (hash: string, parents: string, subject: string) =>
@@ -205,13 +238,14 @@ describe('FileHistoryService', () => {
     expect(entries[0]).toMatchObject({ path: 'new.txt', additions: 1, deletions: 0 });
     expect(entries[1]).toMatchObject({ path: 'old.txt', additions: 2, deletions: 0 });
 
-    const firstPage = await new serviceModule.FileHistoryService(new GitRunner()).getFileHistory(
+    const pagedService = new serviceModule.FileHistoryService(new GitRunner());
+    const firstPage = await pagedService.getFileHistory(
       repository,
       'new.txt',
       [],
       { limit: 1, skip: 0 },
     );
-    const secondPage = await new serviceModule.FileHistoryService(new GitRunner()).getFileHistory(
+    const secondPage = await pagedService.getFileHistory(
       repository,
       'new.txt',
       [],

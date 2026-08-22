@@ -125,6 +125,71 @@ describe('GitRunner', () => {
     ).rejects.toThrow('stdout exceeded 1024 bytes');
   });
 
+  it('applies a bounded stdout ceiling when a call does not provide one', async () => {
+    const { GitRunner } = await import('../../src/git/GitRunner');
+    const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-runner-'));
+    temporaryDirectories.push(cwd);
+    const runner = new GitRunner({
+      executable: process.execPath,
+      defaultMaxStdoutBytes: 1024,
+    } as never);
+
+    await expect(
+      runner.run(['-e', 'process.stdout.write("x".repeat(4096))'], { cwd }),
+    ).rejects.toThrow('stdout exceeded 1024 bytes');
+  });
+
+  it('force-kills a process that ignores the timeout termination signal', async () => {
+    const { GitRunner } = await import('../../src/git/GitRunner');
+    const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-runner-'));
+    temporaryDirectories.push(cwd);
+    const runner = new GitRunner({
+      executable: process.execPath,
+      killGraceMs: 50,
+    } as never);
+    const startedAt = performance.now();
+
+    await expect(
+      runner.run(
+        [
+          '-e',
+          'process.on("SIGTERM", () => {}); setInterval(() => {}, 100); setTimeout(() => process.exit(9), 1000)',
+        ],
+        { cwd, timeoutMs: 150 },
+      ),
+    ).rejects.toMatchObject({ timedOut: true });
+
+    expect(performance.now() - startedAt).toBeLessThan(500);
+  });
+
+  it.skipIf(process.platform === 'win32')(
+    'force-kills surviving process-group descendants after the leader exits',
+    async () => {
+      const { GitRunner } = await import('../../src/git/GitRunner');
+      const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-runner-'));
+      temporaryDirectories.push(cwd);
+      const runner = new GitRunner({
+        executable: process.execPath,
+        killGraceMs: 50,
+      } as never);
+      const descendantScript =
+        'process.on("SIGTERM", () => {}); setTimeout(() => process.exit(0), 700)';
+      const leaderScript = [
+        'const { spawn } = require("node:child_process")',
+        `spawn(process.execPath, ["-e", ${JSON.stringify(descendantScript)}], { stdio: ["ignore", "inherit", "inherit"] })`,
+        'process.on("SIGTERM", () => process.exit(0))',
+        'setInterval(() => {}, 100)',
+      ].join(';');
+      const startedAt = performance.now();
+
+      await expect(
+        runner.run(['-e', leaderScript], { cwd, timeoutMs: 150 }),
+      ).rejects.toMatchObject({ timedOut: true });
+
+      expect(performance.now() - startedAt).toBeLessThan(500);
+    },
+  );
+
   it('stops buffering stderr after the configured byte ceiling', async () => {
     const { GitRunner } = await import('../../src/git/GitRunner');
     const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-runner-'));

@@ -37,9 +37,22 @@ export interface LogQuery {
   filters?: LogFilters;
 }
 
-function attachRefs<T extends CommitSummary>(commit: T, refs: readonly RefLabel[]): T {
-  const matchingRefs = refs.filter((ref) => ref.target === commit.hash);
-  return { ...commit, refs: matchingRefs };
+function indexRefsByTarget(refs: readonly RefLabel[]): ReadonlyMap<string, readonly RefLabel[]> {
+  const indexed = new Map<string, RefLabel[]>();
+  for (const ref of refs) {
+    const target = ref.target;
+    const matching = indexed.get(target) ?? [];
+    matching.push(ref);
+    indexed.set(target, matching);
+  }
+  return indexed;
+}
+
+function attachRefs<T extends CommitSummary>(
+  commit: T,
+  refsByTarget: ReadonlyMap<string, readonly RefLabel[]>,
+): T {
+  return { ...commit, refs: refsByTarget.get(commit.hash) ?? [] };
 }
 
 function validatePage(query: LogQuery): void {
@@ -168,6 +181,7 @@ export class GitService {
   async getLog(cwd: string, query: LogQuery): Promise<CommitSummary[]> {
     validatePage(query);
     const filters = query.filters ?? EMPTY_LOG_FILTERS;
+    const refsByTarget = indexRefsByTarget(query.refs);
     if (filters.branches.length) {
       const knownRefs = new Set(query.refs.map((ref) => ref.fullName));
       const unknownBranch = filters.branches.find((branch) => !knownRefs.has(branch));
@@ -185,7 +199,7 @@ export class GitService {
           }),
           { cwd, ...(query.signal ? { signal: query.signal } : {}), timeoutMs: 60_000 },
         );
-        return parseLog(result.stdout).map((commit) => attachRefs(commit, query.refs));
+        return parseLog(result.stdout).map((commit) => attachRefs(commit, refsByTarget));
       }
 
       const text = filters.text.trim();
@@ -238,7 +252,7 @@ export class GitService {
             ...(query.signal ? { signal: query.signal } : {}),
             timeoutMs: 30_000,
           });
-          return parseLog(result.stdout).map((commit) => attachRefs(commit, query.refs));
+          return parseLog(result.stdout).map((commit) => attachRefs(commit, refsByTarget));
         }
       }
 
@@ -287,7 +301,7 @@ export class GitService {
           query.skip - cache.baseMatchIndex,
           query.skip - cache.baseMatchIndex + query.limit,
         )
-        .map((commit) => attachRefs(commit, query.refs));
+        .map((commit) => attachRefs(commit, refsByTarget));
     } catch (error) {
       if (
         error instanceof GitCommandError &&
@@ -316,7 +330,7 @@ export class GitService {
       ['show', '--no-patch', `--format=${DETAILS_FORMAT}`, hash, '--'],
       { cwd, ...(signal ? { signal } : {}), timeoutMs: 30_000 },
     );
-    return attachRefs(parseCommitDetails(result.stdout), refs);
+    return attachRefs(parseCommitDetails(result.stdout), indexRefsByTarget(refs));
   }
 
   async getCommitMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<string> {
@@ -352,7 +366,7 @@ export class GitService {
       parent ?? (await this.getCommitDetails(cwd, hash, [], signal)).parents[0];
     const signalOption = signal ? { signal } : {};
     const statusArgs = selectedParent
-      ? ['diff', '--name-status', '-z', '-M', '-C', '--find-copies-harder', selectedParent, hash, '--']
+      ? ['diff', '--name-status', '-z', '-M', '-C', '--find-copies-harder', '-l1000', selectedParent, hash, '--']
       : [
           'diff-tree',
           '--root',
@@ -363,10 +377,11 @@ export class GitService {
           '-M',
           '-C',
           '--find-copies-harder',
+          '-l1000',
           hash,
         ];
     const numstatArgs = selectedParent
-      ? ['diff', '--numstat', '-z', '-M', '-C', '--find-copies-harder', selectedParent, hash, '--']
+      ? ['diff', '--numstat', '-z', '-M', selectedParent, hash, '--']
       : [
           'diff-tree',
           '--root',
@@ -375,8 +390,6 @@ export class GitService {
           '-r',
           '-z',
           '-M',
-          '-C',
-          '--find-copies-harder',
           hash,
         ];
 

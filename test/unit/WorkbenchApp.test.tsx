@@ -3384,7 +3384,7 @@ describe('WorkbenchApp', () => {
     expect(screen.getByRole('button', { name: 'Fetch remotes' })).toBeDisabled();
   });
 
-  it('persists the commit scroll anchor in Webview and workspace state', () => {
+  it('coalesces rapid commit scrolling before persisting the latest anchor', () => {
     vi.useFakeTimers();
     render(<App />);
     act(() => {
@@ -3444,24 +3444,31 @@ describe('WorkbenchApp', () => {
     if (!viewport) return;
     Object.defineProperty(viewport, 'scrollTop', {
       configurable: true,
-      value: 84,
+      value: 28,
       writable: true,
     });
     fireEvent.scroll(viewport);
+    viewport.scrollTop = 56;
+    fireEvent.scroll(viewport);
+    viewport.scrollTop = 84;
+    fireEvent.scroll(viewport);
 
-    expect(setWebviewState).toHaveBeenCalledWith({
+    expect(setWebviewState).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(199));
+    expect(setWebviewState).not.toHaveBeenCalled();
+    act(() => vi.advanceTimersByTime(1));
+    expect(setWebviewState).toHaveBeenCalledTimes(1);
+    expect(setWebviewState).toHaveBeenLastCalledWith({
       scrollTopByRepository: { 'repo-scroll': 84 },
     });
-    act(() => vi.advanceTimersByTime(250));
-    expect(postedMessages).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          type: 'updateScrollAnchor',
-          repositoryId: 'repo-scroll',
-          scrollTop: 84,
-        }),
-      ]),
-    );
+    expect(
+      postedMessages.filter(
+        (message) =>
+          message.type === 'updateScrollAnchor' &&
+          message.repositoryId === 'repo-scroll' &&
+          message.scrollTop === 84,
+      ),
+    ).toHaveLength(1);
   });
 
   it('keeps history scrolling isolated and restores the normal log scroll position on close', () => {

@@ -3,12 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 const {
   controllerDispose,
   controllerHandleMessage,
+  controllerUpdateWorkspaceRoots,
   controllerOpenHistory,
   executeCommand,
 } = vi.hoisted(() => {
   return {
     controllerDispose: vi.fn(),
     controllerHandleMessage: vi.fn().mockResolvedValue(undefined),
+    controllerUpdateWorkspaceRoots: vi.fn().mockResolvedValue(undefined),
     controllerOpenHistory: vi.fn().mockResolvedValue(undefined),
     executeCommand: vi.fn().mockResolvedValue(undefined),
   };
@@ -61,7 +63,7 @@ vi.mock('../../src/webview/WorkbenchController', () => ({
     openEditorHistory = controllerOpenHistory;
     dispose = controllerDispose;
     notifyRepositoryChanged = vi.fn();
-    updateWorkspaceRoots = vi.fn().mockResolvedValue(undefined);
+    updateWorkspaceRoots = controllerUpdateWorkspaceRoots;
   },
 }));
 
@@ -80,6 +82,7 @@ describe('WorkbenchViewProvider editor history handoff', () => {
     controllerDispose.mockClear();
     controllerHandleMessage.mockClear();
     controllerOpenHistory.mockClear();
+    controllerUpdateWorkspaceRoots.mockReset().mockResolvedValue(undefined);
     executeCommand.mockClear();
   });
 
@@ -160,5 +163,56 @@ describe('WorkbenchViewProvider editor history handoff', () => {
 
     provider.dispose();
     expect(controllerDispose).toHaveBeenCalledOnce();
+  });
+
+  it('reports asynchronous workspace refresh failures to the output channel', async () => {
+    let workspaceFoldersHandler: (() => void) | undefined;
+    const vscodeModule = await import('vscode');
+    vi.mocked(vscodeModule.workspace.onDidChangeWorkspaceFolders).mockImplementation((handler) => {
+      workspaceFoldersHandler = handler as () => void;
+      return { dispose: vi.fn() };
+    });
+    const failure = Promise.reject(new Error('workspace refresh failed'));
+    void failure.catch(() => undefined);
+    controllerUpdateWorkspaceRoots.mockReturnValueOnce(failure);
+    const output = { appendLine: vi.fn(), show: vi.fn() };
+    const context = {
+      extensionUri: {},
+      workspaceState: {
+        get: <T>(_key: string, fallback?: T): T | undefined => fallback,
+        update: vi.fn().mockResolvedValue(undefined),
+      },
+    };
+    const provider = new WorkbenchViewProvider(
+      context as never,
+      output as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+      {} as never,
+    );
+    const webview = {
+      cspSource: 'vscode-webview:',
+      html: '',
+      options: {},
+      asWebviewUri: (uri: { toString(): string }) => uri,
+      postMessage: vi.fn().mockResolvedValue(true),
+      onDidReceiveMessage: vi.fn(() => ({ dispose: vi.fn() })),
+    };
+    provider.resolveWebviewView({
+      webview,
+      onDidDispose: vi.fn(() => ({ dispose: vi.fn() })),
+    } as never);
+
+    workspaceFoldersHandler?.();
+
+    await vi.waitFor(() =>
+      expect(output.appendLine).toHaveBeenCalledWith(
+        expect.stringContaining('workspace refresh failed'),
+      ),
+    );
+    provider.dispose();
   });
 });

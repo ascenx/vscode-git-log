@@ -666,6 +666,80 @@ describe('GitService', () => {
     );
   });
 
+  it('runs exhaustive copy detection only for file status and caps its candidate search', async () => {
+    const hash = 'a'.repeat(40);
+    const parent = 'b'.repeat(40);
+    const run = vi.fn(async (args: readonly string[]) => ({
+      stdout: args.includes('--name-status')
+        ? Buffer.from('C100\0source.txt\0copied.txt\0')
+        : args.includes('--numstat')
+          ? Buffer.from('1\t0\tcopied.txt\0')
+          : Buffer.from(
+              [hash, parent, 'Alice', 'alice@example.com', '1', 'Alice', 'alice@example.com', '1', 'subject', 'G'].join('\0'),
+            ),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    }));
+    const service = new GitService({ run } as unknown as GitRunner);
+
+    const files = await service.getChangedFiles('/repo', hash, parent);
+
+    expect(files).toEqual([
+      expect.objectContaining({
+        status: 'C',
+        oldPath: 'source.txt',
+        path: 'copied.txt',
+        additions: 1,
+      }),
+    ]);
+    const statusArgs = run.mock.calls.find(([args]) => args.includes('--name-status'))?.[0];
+    const numstatArgs = run.mock.calls.find(([args]) => args.includes('--numstat'))?.[0];
+    expect(statusArgs).toContain('--find-copies-harder');
+    expect(statusArgs).toContain('-l1000');
+    expect(numstatArgs).not.toContain('--find-copies-harder');
+    expect(numstatArgs).not.toContain('-C');
+  });
+
+  it('indexes refs by target once when decorating a log page', async () => {
+    const commitCount = 50;
+    const refsCount = 80;
+    let targetReads = 0;
+    const refs = Array.from({ length: refsCount }, (_, index) => {
+      const target = index < commitCount ? index.toString(16).padStart(40, '0') : 'f'.repeat(40);
+      return {
+        fullName: `refs/tags/tag-${String(index)}`,
+        shortName: `tag-${String(index)}`,
+        kind: 'tag' as const,
+        get target() {
+          targetReads += 1;
+          return target;
+        },
+        ahead: 0,
+        behind: 0,
+        isCurrent: false,
+      };
+    });
+    const output = Array.from({ length: commitCount }, (_, index) =>
+      `\x1e${index.toString(16).padStart(40, '0')}\x00\x00Alice\x00alice@example.com\x001\x001\x00commit ${String(index)}\x00`,
+    ).join('');
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(output),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as unknown as GitRunner).getLog('/repo', {
+      limit: commitCount,
+      skip: 0,
+      refs,
+    });
+
+    expect(commits).toHaveLength(commitCount);
+    expect(targetReads).toBeLessThanOrEqual(refsCount + commitCount);
+  });
+
   it('loads an inline patch for one file from root and ordinary commits', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'git-log-workbench-file-patch-'));
     temporaryDirectories.push(repository);

@@ -3,7 +3,7 @@ import { mkdtemp, mkdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { basename, join } from 'node:path';
 import { promisify } from 'node:util';
-import { afterEach, describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitRunner } from '../../src/git/GitRunner';
 
 const execFileAsync = promisify(execFile);
@@ -81,6 +81,50 @@ describe('discoverRepositories', () => {
     );
 
     expect(repositories.map((repository) => repository.displayName)).toEqual(['included']);
+  });
+
+  it('limits concurrent repository inspections', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'git-log-workbench-discovery-limit-'));
+    temporaryDirectories.push(workspace);
+    const candidates = Array.from({ length: 8 }, (_, index) => join(workspace, `repo-${String(index)}`));
+    await Promise.all(candidates.map((candidate) => mkdir(join(candidate, '.git'), { recursive: true })));
+    let activeInspections = 0;
+    let maximumInspections = 0;
+    const run = vi.fn(async (args: readonly string[], options: { cwd: string }) => {
+      if (args.includes('--absolute-git-dir')) {
+        activeInspections += 1;
+        maximumInspections = Math.max(maximumInspections, activeInspections);
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        activeInspections -= 1;
+        return {
+          stdout: Buffer.from(`${join(options.cwd, '.git')}\nfalse\n`),
+          stderr: Buffer.alloc(0),
+          exitCode: 0,
+          durationMs: 1,
+        };
+      }
+      const stdout = args.includes('--show-toplevel')
+        ? `${options.cwd}\n`
+        : args.includes('--git-common-dir')
+          ? `${join(options.cwd, '.git')}\n`
+          : '';
+      return {
+        stdout: Buffer.from(stdout),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        durationMs: 1,
+      };
+    });
+    const { discoverRepositories } = await import('../../src/repositories/discoverRepositories');
+
+    const repositories = await discoverRepositories(
+      [workspace],
+      { run } as unknown as GitRunner,
+      { scanDepth: 1, maxConcurrency: 2 },
+    );
+
+    expect(repositories).toHaveLength(candidates.length);
+    expect(maximumInspections).toBeLessThanOrEqual(2);
   });
 
   it('reports missing and unsupported Git versions before repository scanning', async () => {

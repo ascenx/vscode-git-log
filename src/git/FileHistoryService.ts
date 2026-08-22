@@ -34,14 +34,30 @@ interface FileHistoryCacheEntry {
   cwd: string;
   head: string;
   path: string;
+  scannedRecords: number;
   complete: boolean;
   entries: HistoryEntry[];
 }
 
+function countHistoryRecords(output: Buffer): number {
+  let count = 0;
+  for (const byte of output) {
+    if (byte === 0x1e) count += 1;
+  }
+  return count;
+}
+
 function attachRefs(entries: readonly HistoryEntry[], refs: readonly RefLabel[]): HistoryEntry[] {
+  const refsByTarget = new Map<string, RefLabel[]>();
+  for (const ref of refs) {
+    const target = ref.target;
+    const matching = refsByTarget.get(target) ?? [];
+    matching.push(ref);
+    refsByTarget.set(target, matching);
+  }
   return entries.map((entry) => ({
     ...entry,
-    refs: refs.filter((ref) => ref.target === entry.hash),
+    refs: refsByTarget.get(entry.hash) ?? [],
   }));
 }
 
@@ -121,16 +137,28 @@ export class FileHistoryService {
     });
     const head = headResult.stdout.toString('utf8').trim();
     const cacheKey = JSON.stringify([cwd, head, path]);
-    const cached = this.fileHistoryCaches.get(cacheKey);
+    let cached = this.fileHistoryCaches.get(cacheKey);
     if (cached && (cached.complete || cached.entries.length >= scanLimit)) {
       this.fileHistoryCaches.delete(cacheKey);
       this.fileHistoryCaches.set(cacheKey, cached);
       return attachRefs(cached.entries.slice(page.skip, scanLimit), refs);
     }
-    let rawScanLimit = scanLimit;
-    let entries: HistoryEntry[];
-    let complete: boolean;
-    while (true) {
+    if (!cached) {
+      cached = {
+        cwd,
+        head,
+        path,
+        scannedRecords: 0,
+        complete: false,
+        entries: [],
+      };
+      this.fileHistoryCaches.set(cacheKey, cached);
+    }
+    let rawScanLimit = Math.max(
+      scanLimit,
+      cached.scannedRecords + Math.max(1, scanLimit - cached.entries.length),
+    );
+    while (!cached.complete && cached.entries.length < scanLimit) {
       const result = await this.runner.run(
         [
           '--literal-pathspecs',
@@ -155,29 +183,25 @@ export class FileHistoryService {
           maxStdoutBytes: 64 * 1024 * 1024,
         },
       );
-      entries = parseFileHistory(result.stdout, []);
-      const rawRecordCount = result.stdout.toString('utf8').split('\x1e').length - 1;
-      complete = rawRecordCount < rawScanLimit;
-      if (complete || entries.length >= scanLimit) break;
+      const rawRecordCount = countHistoryRecords(result.stdout);
+      cached.entries = parseFileHistory(result.stdout, []);
+      cached.scannedRecords = rawRecordCount;
+      cached.complete = rawRecordCount < rawScanLimit;
+      if (cached.complete || cached.entries.length >= scanLimit) break;
       const nextRawScanLimit = rawScanLimit * 2;
       if (!Number.isSafeInteger(nextRawScanLimit)) {
         throw new Error('File history scan exceeds the supported range.');
       }
       rawScanLimit = nextRawScanLimit;
     }
-    this.fileHistoryCaches.set(cacheKey, {
-      cwd,
-      head,
-      path,
-      complete,
-      entries,
-    });
+    this.fileHistoryCaches.delete(cacheKey);
+    this.fileHistoryCaches.set(cacheKey, cached);
     while (this.fileHistoryCaches.size > MAX_FILE_HISTORY_CACHES) {
       const oldestKey = this.fileHistoryCaches.keys().next().value as string | undefined;
       if (!oldestKey) break;
       this.fileHistoryCaches.delete(oldestKey);
     }
-    return attachRefs(entries.slice(page.skip, scanLimit), refs);
+    return attachRefs(cached.entries.slice(page.skip, scanLimit), refs);
   }
 
   async resolveHeadLineRange(
@@ -333,7 +357,7 @@ export class FileHistoryService {
         },
       );
       entries = parseLineHistory(result.stdout, refs, path);
-      const rawRecordCount = result.stdout.toString('utf8').split('\x1e').length - 1;
+      const rawRecordCount = countHistoryRecords(result.stdout);
       if (rawRecordCount < rawScanLimit || entries.length >= targetEntryCount) break;
       const nextRawScanLimit = rawScanLimit * 2;
       if (!Number.isSafeInteger(nextRawScanLimit)) {

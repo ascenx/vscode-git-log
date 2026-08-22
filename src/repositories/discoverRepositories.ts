@@ -9,6 +9,7 @@ export interface RepositoryDiscoveryOptions {
   scanDepth: number;
   excludedDirectoryNames?: readonly string[];
   excludePatterns?: readonly string[];
+  maxConcurrency?: number;
 }
 
 function globToRegExp(glob: string): RegExp {
@@ -56,49 +57,72 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function hasBareRepositoryShape(directory: string): Promise<boolean> {
-  const markers = ['HEAD', 'objects', 'refs'];
-  const results = await Promise.all(markers.map((marker) => exists(join(directory, marker))));
-  return results.every(Boolean);
+async function mapWithConcurrency<T, R>(
+  values: readonly T[],
+  concurrency: number,
+  operation: (value: T) => Promise<R>,
+): Promise<R[]> {
+  const results = new Array<R>(values.length);
+  let nextIndex = 0;
+  const workers = Array.from({ length: Math.min(concurrency, values.length) }, async () => {
+    while (true) {
+      const index = nextIndex;
+      nextIndex += 1;
+      if (index >= values.length) return;
+      results[index] = await operation(values[index]!);
+    }
+  });
+  await Promise.all(workers);
+  return results;
 }
 
 async function collectCandidates(
-  workspaceRoot: string,
-  directory: string,
-  depth: number,
+  workspaceRoots: readonly string[],
   options: RepositoryDiscoveryOptions,
-  candidates: Set<string>,
   excludePatterns: readonly RegExp[],
-): Promise<void> {
-  if (isExcludedPath(workspaceRoot, directory, excludePatterns)) return;
-  const hasDotGit = await exists(join(directory, '.git'));
-  const isBareCandidate = !hasDotGit && (await hasBareRepositoryShape(directory));
-
-  if (hasDotGit || isBareCandidate) candidates.add(directory);
-  if (isBareCandidate || depth >= options.scanDepth) return;
-
+  concurrency: number,
+): Promise<Set<string>> {
+  const candidates = new Set<string>();
   const excluded = new Set(['.git', ...(options.excludedDirectoryNames ?? [])]);
-  let entries;
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    return;
+  let frontier = workspaceRoots.map((workspaceRoot) => ({
+    workspaceRoot,
+    directory: workspaceRoot,
+    depth: 0,
+  }));
+  while (frontier.length > 0) {
+    const scanned = await mapWithConcurrency(frontier, concurrency, async (item) => {
+      if (isExcludedPath(item.workspaceRoot, item.directory, excludePatterns)) return [];
+      let entries;
+      try {
+        entries = await readdir(item.directory, { withFileTypes: true });
+      } catch {
+        return [];
+      }
+      const names = new Map(entries.map((entry) => [entry.name, entry]));
+      const hasDotGit = names.has('.git');
+      const isBareCandidate =
+        !hasDotGit &&
+        names.has('HEAD') &&
+        names.get('objects')?.isDirectory() === true &&
+        names.get('refs')?.isDirectory() === true;
+      if (hasDotGit || isBareCandidate) candidates.add(item.directory);
+      if (isBareCandidate || item.depth >= options.scanDepth) return [];
+      return entries
+        .filter(
+          (entry) =>
+            entry.isDirectory() &&
+            !entry.isSymbolicLink() &&
+            !excluded.has(entry.name),
+        )
+        .map((entry) => ({
+          workspaceRoot: item.workspaceRoot,
+          directory: join(item.directory, entry.name),
+          depth: item.depth + 1,
+        }));
+    });
+    frontier = scanned.flat();
   }
-
-  await Promise.all(
-    entries
-      .filter((entry) => entry.isDirectory() && !entry.isSymbolicLink() && !excluded.has(entry.name))
-      .map((entry) =>
-        collectCandidates(
-          workspaceRoot,
-          join(directory, entry.name),
-          depth + 1,
-          options,
-          candidates,
-          excludePatterns,
-        ),
-      ),
-  );
+  return candidates;
 }
 
 export async function ensureSupportedGit(runner: GitRunner, cwd: string): Promise<string> {
@@ -198,17 +222,23 @@ export async function discoverRepositories(
   runner: GitRunner,
   options: RepositoryDiscoveryOptions,
 ): Promise<RepositorySummary[]> {
-  const candidates = new Set<string>();
+  const concurrency = options.maxConcurrency ?? 16;
+  if (!Number.isSafeInteger(concurrency) || concurrency < 1 || concurrency > 64) {
+    throw new Error('Repository discovery concurrency must be an integer between 1 and 64.');
+  }
   const excludePatterns = (options.excludePatterns ?? []).map(globToRegExp);
-  await Promise.all(
-    workspaceRoots.map((root) => {
-      const resolvedRoot = resolve(root);
-      return collectCandidates(resolvedRoot, resolvedRoot, 0, options, candidates, excludePatterns);
-    }),
+  const resolvedRoots = workspaceRoots.map((root) => resolve(root));
+  const candidates = await collectCandidates(
+    resolvedRoots,
+    options,
+    excludePatterns,
+    concurrency,
   );
 
-  const inspected = await Promise.all(
-    [...candidates].map((candidate) => inspectRepository(candidate, runner)),
+  const inspected = await mapWithConcurrency(
+    [...candidates],
+    concurrency,
+    (candidate) => inspectRepository(candidate, runner),
   );
   const unique = new Map<string, RepositorySummary>();
   for (const repository of inspected) {

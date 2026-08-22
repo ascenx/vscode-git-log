@@ -1,6 +1,7 @@
 import { build, context } from 'esbuild';
 
 const watch = process.argv.includes('--watch');
+const production = !watch;
 
 const shared = {
   bundle: true,
@@ -25,6 +26,7 @@ const builds = [
     platform: 'node',
     format: 'cjs',
     target: 'node18',
+    minify: production,
   },
   {
     ...shared,
@@ -33,6 +35,10 @@ const builds = [
     platform: 'browser',
     format: 'iife',
     target: ['es2022'],
+    minify: production,
+    define: {
+      'process.env.NODE_ENV': JSON.stringify(production ? 'production' : 'development'),
+    },
     loader: {
       '.svg': 'dataurl',
     },

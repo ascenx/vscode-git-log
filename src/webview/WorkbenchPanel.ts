@@ -88,7 +88,10 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
           watcher,
         );
       },
-      (repositoryId) => void controllerRef.current?.notifyRepositoryChanged(repositoryId),
+      (repositoryId) =>
+        this.runSafely('repository refresh failed', () =>
+          controllerRef.current?.notifyRepositoryChanged(repositoryId),
+        ),
     );
     const controller = new WorkbenchController({
       workspaceRoots: (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
@@ -148,17 +151,19 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
           this.output.appendLine('[protocol] Ignored an invalid webview message.');
           return;
         }
-        void (async () => {
+        this.runSafely('webview message handling failed', async () => {
           await controller.handleMessage(message);
           if (message.type === 'ready' && this.session === session) {
             session.ready = true;
             await this.flushPendingHistory();
           }
-        })();
+        });
       }),
       vscode.workspace.onDidChangeWorkspaceFolders(() => {
-        void controller.updateWorkspaceRoots(
-          (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+        this.runSafely('workspace refresh failed', () =>
+          controller.updateWorkspaceRoots(
+            (vscode.workspace.workspaceFolders ?? []).map((folder) => folder.uri.fsPath),
+          ),
         );
       }),
       view.onDidDispose(() => {
@@ -193,5 +198,15 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
     if (!session?.ready || !request) return;
     this.pendingHistoryRequest = undefined;
     await session.controller.openEditorHistory(request);
+  }
+
+  private runSafely(label: string, task: () => void | Promise<void>): void {
+    void Promise.resolve()
+      .then(task)
+      .catch((error: unknown) => {
+        this.output.appendLine(
+          `[workbench] ${label}: ${error instanceof Error ? error.message : String(error)}`,
+        );
+      });
   }
 }
