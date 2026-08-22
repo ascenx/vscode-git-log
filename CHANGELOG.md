@@ -2,6 +2,28 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.0.7
+
+### Added
+
+- Added a confirmed `Force Delete…` action directly to non-current Local Branch context menus.
+
+### Changed
+
+- `Go to HEAD` now locates the checked-out HEAD inside the currently displayed branch or filtered commit list, aligns it as the first visible row, and does not switch the active commit list.
+- Improved large-repository responsiveness with isolated virtual commit rendering, frame-coalesced scrolling, debounced scroll persistence, indexed ref attachment, cached date formatting, concurrent repository discovery, and incremental file-history paging.
+- Minified production Extension Host, Webview, and syntax-worker bundles.
+
+### Fixed
+
+- Preserved HEAD positioning across asynchronous filter replacements without snapping back when later commit pages are appended.
+- Kept automatic commit pagination working when the final commits are aligned at the top of the viewport.
+- Bounded Git command output, terminated cancelled command process groups more reliably, limited expensive copy detection on large changes, and reported background Webview errors without leaving unhandled rejections.
+
+### Safety
+
+- Force Delete uses `git branch -D` only after a modal confirmation that names the repository and exact branch and warns that the branch may be unmerged.
+
 ## 0.0.6
 
 ### Added

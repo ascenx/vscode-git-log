@@ -2,7 +2,7 @@
 
 ## Development
 
-1. Install Node.js 22 and Git 2.30 or newer.
+1. Install Node.js 22 and Git 2.27 or newer.
 2. Run `npm install`.
 3. Run `npm run watch` and launch the `Run Extension` configuration from VS Code.
 

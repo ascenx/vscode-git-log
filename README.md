@@ -27,6 +27,10 @@ code --install-extension ascenx.git-log
 
 ![Git Log Workbench](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/git_log_workbench.png)
 
+### Current-line Blame and Editor Menu
+
+![Current-line Blame and Editor Menu](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/git_blame_and_menu.png)
+
 ### File History
 
 ![File History](https://raw.githubusercontent.com/ascenx/vscode-git-log/main/images/file_history.png)
@@ -71,14 +75,14 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Synchronized Refs, Commit Graph, Changed Files, and Commit Details areas.
 - A dedicated Branch pane search and a recursive, collapsible reference tree that groups slash-delimited Local, Remote, and Tag names into folders. Remote names containing `/` remain distinct top-level folders.
 - A dedicated `Git Log` tab in the VS Code bottom Panel alongside Problems, Output, and Terminal. `Open Log` focuses this tab directly without opening an editor page or intermediate welcome view.
-- Paginated logs, bounded sliding windows, custom DAG lanes, graph continuation across windows, fixed-row virtual scrolling, and large-list performance benchmarks. Deep-page global offsets, selections, and relative scroll positions can be restored.
+- Paginated logs, bounded sliding windows, custom DAG lanes, graph continuation across windows, fixed-row virtual scrolling, and large-list performance benchmarks. Deep-page global offsets, selections, and relative scroll positions can be restored. `Go to HEAD` locates the checked-out HEAD in the active filtered list and aligns it as the first visible row without changing the filter.
 - Combined Text/Hash, Branch, User, Date, and Path filters with cancellation and stale-response rejection. Repository refreshes do not overwrite an active search draft. Text queries scan the full message, author name, and email in canonical `git log --date-order` order while preserving child-before-parent topology.
 - Changed-file handling for root, merge, rename, copy, and binary commits, with native VS Code diffs. Multi-commit selections combine files from every selected commit while retaining the correct commit and parent for each file action.
 - Checkout, Checkout Revision, Branch, Tag, Fetch, Pull, Push, Cherry-pick, Revert, Merge, Rebase, Reset, and branch rename/delete operations, with context menus for commits and Local, Remote, Tag, and HEAD refs.
 - Complete stash management supports optional untracked files, change previews, Apply, Pop, and confirmed Drop.
 - Branch clicks select and display that branch's commits without checking it out; checkout remains an explicit Ref context-menu action.
 - Commits can be selected as a contiguous range with Shift+click or Shift+Arrow keys, or toggled individually with Ctrl/Cmd+click. Changed Files combines every selected commit; Drop and Squash remain limited to contiguous ranges. Squash preloads the selected full commit messages in visible top-to-bottom order. History rewrites require a clean worktree and explicit confirmation, and reject root commits, merge commits, stale selections, and changes to the active branch or HEAD during confirmation.
-- Unmerged branch deletion errors offer a warning-colored Force Delete action, and error notices remain visible for five seconds before closing automatically.
+- Local Branch context menus provide a confirmed `Force Delete…` action for non-current branches. Normal deletion failures for unmerged branches also offer a warning-colored Force Delete recovery action, and error notices remain visible for five seconds before closing automatically.
 - Serialized writes per common Git directory, per-repository Webview operation locks, destructive-operation confirmation dialogs, classified Git errors, redacted Output Channel diagnostics, and post-operation repository refreshes.
 - Draggable panes and columns, collapsible panes, and workspace-scoped width and height persistence. Commit, Author, Date, and Refs columns are always visible, and deep-page selections and scroll positions survive reopening the panel.
 - Resizable Commit and Refs table columns with persisted widths. Changed Files supports horizontal scrolling for deep paths, with additions in green and deletions in red.
@@ -115,6 +119,8 @@ npm run package
 ## Usage tips
 
 - Click or double-click a Local or Remote branch to display its commit history without checking it out. Use the Local branch context menu when you explicitly want to check it out.
+- Use `Go to HEAD` to locate the repository's checked-out HEAD inside the commit list currently being viewed; it does not switch the active Branch filter.
+- Use `Force Delete…` only when a non-current Local Branch must be removed even though it is not fully merged. Git Log shows a modal confirmation before running the operation.
 - Use the Branch pane search to filter references locally. Slash-delimited names are grouped into folders that can be expanded or collapsed independently.
 - Hold Shift while clicking another commit or pressing Up/Down to extend a contiguous range. Use Ctrl+click on Windows/Linux or Cmd+click on macOS to toggle non-contiguous commits. Changed Files combines all selected commits, while `Drop commits…` and `Squash commits…` appear only for contiguous ranges.
 - Right-click a single commit and choose `Checkout Revision` to inspect it in detached HEAD state; create a branch before committing if the work should be retained.
@@ -133,7 +139,7 @@ npm run package
 - Every Git command uses a `spawn` argument array without a shell.
 - The extension never stores passwords, tokens, or SSH private keys. Remote authentication is delegated to Git.
 - The Output Channel redacts URL user information and does not log file contents or complete environment variables.
-- Hard Reset, Force Push with Lease, Branch Delete, and other destructive operations show the repository and exact target before confirmation.
+- Hard Reset, Force Push with Lease, Branch Delete, Force Delete, and other destructive operations show the repository and exact target before confirmation.
 - Force-push target resolution, confirmation, and execution occur under the same common Git directory queue lock, pin the source object ID, and reject implicit or incomplete target refspecs.
 - A text-history scan is limited to 64 MiB of stdout, the rolling match cache is bounded, and the Webview commit window respects `maxCachedCommits`.
 - Telemetry is disabled by default.
