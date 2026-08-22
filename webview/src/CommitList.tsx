@@ -15,6 +15,12 @@ interface CommitListProps {
   initialScrollTop: number;
   scrollAnchorKey: string;
   horizontalScrollResetKey: string;
+  revealTarget?: {
+    hash: string;
+    requestId: number;
+    listRevision: number;
+    minimumListRevision: number;
+  };
   onScrollTopChange(scrollTop: number): void;
   onHorizontalScroll(scrollLeft: number): void;
   onSelect(commit: CommitSummary, extend: boolean, toggle?: boolean): void;
@@ -32,6 +38,7 @@ export function CommitList({
   initialScrollTop,
   scrollAnchorKey,
   horizontalScrollResetKey,
+  revealTarget,
   onScrollTopChange,
   onHorizontalScroll,
   onSelect,
@@ -41,9 +48,15 @@ export function CommitList({
   const viewportRef = useRef<HTMLDivElement>(null);
   const scrollFrame = useRef<number | undefined>(undefined);
   const pendingScrollTop = useRef<number | undefined>(undefined);
+  const lastRevealRequest = useRef<number | undefined>(undefined);
   const [scrollTop, setScrollTop] = useState(0);
   const [viewportHeight, setViewportHeight] = useState(560);
   const rowHeight = 28;
+  const revealHash = revealTarget?.hash;
+  const revealRequestId = revealTarget?.requestId;
+  const revealListRevision = revealTarget?.listRevision;
+  const minimumRevealListRevision = revealTarget?.minimumListRevision;
+  const trailingRevealSpace = Math.max(0, viewportHeight - rowHeight);
   const range = getVirtualRange({
     itemCount: commits.length,
     rowHeight,
@@ -88,6 +101,43 @@ export function CommitList({
 
   useEffect(() => {
     const viewport = viewportRef.current;
+    if (
+      !viewport ||
+      !revealHash ||
+      revealRequestId === undefined ||
+      revealListRevision === undefined ||
+      minimumRevealListRevision === undefined ||
+      revealListRevision < minimumRevealListRevision
+    ) {
+      return;
+    }
+    if (lastRevealRequest.current === revealRequestId) return;
+    const index = commits.findIndex((commit) => commit.hash === revealHash);
+    if (index < 0) return;
+    lastRevealRequest.current = revealRequestId;
+    if (scrollFrame.current !== undefined) {
+      window.cancelAnimationFrame(scrollFrame.current);
+      scrollFrame.current = undefined;
+    }
+    const top = index * rowHeight;
+    pendingScrollTop.current = top;
+    viewport.scrollTop = top;
+    scrollFrame.current = window.requestAnimationFrame(() => {
+      scrollFrame.current = undefined;
+      const pending = pendingScrollTop.current;
+      pendingScrollTop.current = undefined;
+      if (pending !== undefined) setScrollTop(pending);
+    });
+  }, [
+    commits,
+    minimumRevealListRevision,
+    revealHash,
+    revealListRevision,
+    revealRequestId,
+  ]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
     if (!viewport) return;
     viewport.scrollLeft = 0;
     onHorizontalScroll(0);
@@ -123,7 +173,8 @@ export function CommitList({
         if (
           hasMore &&
           !loading &&
-          viewport.scrollTop + viewport.clientHeight >= viewport.scrollHeight - rowHeight * 5
+          viewport.scrollTop + viewport.clientHeight >=
+            viewport.scrollHeight - trailingRevealSpace - rowHeight * 5
         ) {
           onLoadMore();
         }
@@ -132,7 +183,12 @@ export function CommitList({
       <div
         className="commit-list"
         role="rowgroup"
-        style={{ height: commits.length * rowHeight + (hasMore ? 32 : 0) }}
+        style={{
+          height:
+            commits.length * rowHeight +
+            trailingRevealSpace +
+            (hasMore ? 32 : 0),
+        }}
       >
         {commits.slice(range.start, range.end).map((commit, visibleIndex) => {
           const index = range.start + visibleIndex;

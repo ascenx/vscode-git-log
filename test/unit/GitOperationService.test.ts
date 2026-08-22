@@ -641,6 +641,11 @@ describe('GitOperationService', () => {
 
   it('describes destructive confirmations with the repository and actual target', async () => {
     const operationModule = await import('../../src/git/GitOperationService');
+    const forceDeleteConfirmation = operationModule.getOperationConfirmation(repository, {
+      kind: 'deleteBranch',
+      name: 'feature/login',
+      force: true,
+    });
 
     expect(
       operationModule.getOperationConfirmation(repository, {
@@ -649,20 +654,13 @@ describe('GitOperationService', () => {
         hash: 'abc1234',
       }),
     ).toMatchObject({ destructive: true, confirmLabel: 'Hard Reset' });
-    expect(
-      operationModule.getOperationConfirmation(repository, {
-        kind: 'deleteBranch',
-        name: 'feature/login',
-        force: true,
-      })?.detail,
-    ).toContain('project');
-    expect(
-      operationModule.getOperationConfirmation(repository, {
-        kind: 'deleteBranch',
-        name: 'feature/login',
-        force: true,
-      })?.detail,
-    ).toContain('feature/login');
+    expect(forceDeleteConfirmation).toMatchObject({
+      destructive: true,
+      confirmLabel: 'Force Delete Branch',
+    });
+    expect(forceDeleteConfirmation?.detail).toContain('project');
+    expect(forceDeleteConfirmation?.detail).toContain('feature/login');
+    expect(forceDeleteConfirmation?.detail).toContain('even if it is not merged');
     expect(
       operationModule.getOperationConfirmation(repository, {
         kind: 'push',

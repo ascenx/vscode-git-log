@@ -1306,6 +1306,80 @@ describe('WorkbenchApp', () => {
     });
   });
 
+  it('loads the next page when the final commits enter view above the reveal spacer', () => {
+    render(<App />);
+    const commits = Array.from({ length: 30 }, (_, index) => ({
+      hash: index.toString(16).padStart(40, '0'),
+      parents: [],
+      subject: `commit ${String(index)}`,
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 30 - index,
+      commitTime: 30 - index,
+      refs: [],
+    }));
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-reveal-spacer-pagination',
+            repositories: [
+              {
+                id: 'repo-reveal-spacer-pagination',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+              },
+            ],
+            selectedRepositoryId: 'repo-reveal-spacer-pagination',
+            pageSize: 30,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-reveal-spacer-pagination',
+            repositoryId: 'repo-reveal-spacer-pagination',
+            refs: [],
+            commits,
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: true,
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+    const viewport = document.querySelector<HTMLElement>('.commit-viewport');
+    expect(viewport).not.toBeNull();
+    if (!viewport) return;
+    Object.defineProperty(viewport, 'clientHeight', { configurable: true, value: 560 });
+    Object.defineProperty(viewport, 'scrollHeight', {
+      configurable: true,
+      value: commits.length * 28 + (560 - 28) + 32,
+    });
+
+    viewport.scrollTop = commits.length * 28 - 560;
+    fireEvent.scroll(viewport);
+
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'requestLogPage',
+      repositoryId: 'repo-reveal-spacer-pagination',
+      skip: commits.length,
+    });
+  });
+
   it('hides destructive remote actions when tracking-ref ownership is ambiguous', () => {
     render(<App />);
     const hash = 'a'.repeat(40);
@@ -1366,6 +1440,185 @@ describe('WorkbenchApp', () => {
     const menu = screen.getByRole('menu', { name: 'ref actions' });
     expect(within(menu).queryByRole('menuitem', { name: 'Delete Remote Branch…' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Fetch' })).not.toBeInTheDocument();
+  });
+
+  it('locates the checked-out HEAD inside the currently filtered branch list', () => {
+    render(<App />);
+    const checkedOutHead = 'a'.repeat(40);
+    const sharedAncestor = '9'.repeat(40);
+    const commitRows = [
+      { hash: 'd'.repeat(40), subject: 'new branch tip' },
+      { hash: 'c'.repeat(40), subject: 'new branch middle' },
+      { hash: checkedOutHead, subject: 'old branch HEAD' },
+      { hash: sharedAncestor, subject: 'shared ancestor' },
+    ];
+    const commits = commitRows.map((commit, index) => {
+      const parent = commitRows[index + 1];
+      return {
+        ...commit,
+        parents: parent ? [parent.hash] : [],
+        authorName: 'Alice',
+        authorEmail: 'alice@example.com',
+        authorTime: 4 - index,
+        commitTime: 4 - index,
+        refs: [],
+      };
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-locate-filtered-head',
+            repositories: [
+              {
+                id: 'repo-locate-filtered-head',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'old',
+                head: checkedOutHead,
+              },
+            ],
+            selectedRepositoryId: 'repo-locate-filtered-head',
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-locate-filtered-head',
+            repositoryId: 'repo-locate-filtered-head',
+            refs: [
+              {
+                fullName: 'refs/heads/old',
+                shortName: 'old',
+                kind: 'local',
+                target: checkedOutHead,
+                ahead: 0,
+                behind: 0,
+                isCurrent: true,
+              },
+              {
+                fullName: 'refs/heads/new',
+                shortName: 'new',
+                kind: 'local',
+                target: commitRows[0]?.hash,
+                ahead: 2,
+                behind: 0,
+                isCurrent: false,
+              },
+            ],
+            commits: [commits[2], commits[3]],
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+    const viewport = document.querySelector<HTMLElement>('.commit-viewport');
+    expect(viewport).not.toBeNull();
+    if (!viewport) return;
+    const goToHead = screen.getByRole('button', { name: 'Go to HEAD' });
+
+    fireEvent.click(screen.getByTitle('refs/heads/new'));
+    fireEvent.click(goToHead);
+    const filterRequest = postedMessages.find((message) => message.type === 'updateFilters');
+    expect(filterRequest?.type).toBe('updateFilters');
+    if (!filterRequest || filterRequest.type !== 'updateFilters') return;
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: filterRequest.requestId,
+            repositoryId: 'repo-locate-filtered-head',
+            refs: [],
+            commits,
+            filters: {
+              text: '',
+              branches: ['refs/heads/new'],
+              authors: [],
+              paths: [],
+            },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    expect(viewport.scrollTop).toBe(56);
+    expect(Number.parseFloat(screen.getByRole('rowgroup').style.height)).toBeGreaterThanOrEqual(
+      commits.length * 28 + 560 - 28,
+    );
+    expect(document.querySelector(`[data-commit-hash="${checkedOutHead}"]`)).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'selectCommit',
+      repositoryId: 'repo-locate-filtered-head',
+      hash: checkedOutHead,
+    });
+    expect(postedMessages.filter((message) => message.type === 'updateFilters')).toHaveLength(1);
+
+    viewport.scrollTop = 0;
+    fireEvent.scroll(viewport);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'page-after-head-location',
+            repositoryId: 'repo-locate-filtered-head',
+            refs: [],
+            commits: [
+              {
+                hash: '8'.repeat(40),
+                parents: [],
+                subject: 'older new branch commit',
+                authorName: 'Alice',
+                authorEmail: 'alice@example.com',
+                authorTime: 0,
+                commitTime: 0,
+                refs: [],
+              },
+            ],
+            filters: {
+              text: '',
+              branches: ['refs/heads/new'],
+              authors: [],
+              paths: [],
+            },
+            replace: false,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    expect(viewport.scrollTop).toBe(0);
+    fireEvent.click(goToHead);
+
+    expect(viewport.scrollTop).toBe(56);
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'selectCommit',
+      repositoryId: 'repo-locate-filtered-head',
+      hash: checkedOutHead,
+    });
   });
 
   it('loads details when Go to HEAD targets a commit outside the retained page', () => {
@@ -3801,6 +4054,97 @@ describe('WorkbenchApp', () => {
     );
   });
 
+  it('offers force deletion for non-current local branches', () => {
+    render(<App />);
+    const mainHash = 'a'.repeat(40);
+    const featureHash = 'b'.repeat(40);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-force-delete-menu',
+            repositories: [
+              {
+                id: 'repo-force-delete-menu',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+                currentBranch: 'main',
+                head: mainHash,
+              },
+            ],
+            selectedRepositoryId: 'repo-force-delete-menu',
+            pageSize: 500,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-force-delete-menu',
+            repositoryId: 'repo-force-delete-menu',
+            refs: [
+              {
+                fullName: 'refs/heads/main',
+                shortName: 'main',
+                kind: 'local',
+                target: mainHash,
+                ahead: 0,
+                behind: 0,
+                isCurrent: true,
+              },
+              {
+                fullName: 'refs/heads/feature/unmerged',
+                shortName: 'feature/unmerged',
+                kind: 'local',
+                target: featureHash,
+                ahead: 1,
+                behind: 0,
+                isCurrent: false,
+              },
+            ],
+            commits: [],
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    postedMessages.length = 0;
+
+    fireEvent.contextMenu(screen.getByTitle('refs/heads/main'));
+    let menu = screen.getByRole('menu', { name: 'ref actions' });
+    expect(within(menu).getByRole('menuitem', { name: 'Force Delete…' })).toBeDisabled();
+
+    fireEvent.contextMenu(screen.getByTitle('refs/heads/feature/unmerged'));
+    menu = screen.getByRole('menu', { name: 'ref actions' });
+    const forceDelete = within(menu).getByRole('menuitem', { name: 'Force Delete…' });
+    expect(forceDelete).toBeEnabled();
+    fireEvent.click(forceDelete);
+
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'runOperation',
+        repositoryId: 'repo-force-delete-menu',
+        operation: {
+          kind: 'deleteBranch',
+          name: 'feature/unmerged',
+          force: true,
+        },
+      }),
+    );
+  });
+
   it('moves commit focus with arrow keys and exposes complete details and compare/copy actions', () => {
     render(<App />);
     const childHash = 'c'.repeat(40);
@@ -4390,7 +4734,7 @@ describe('WorkbenchApp', () => {
 
     const expectedTitles = new Map([
       ['Refresh log', 'Refresh local repository state'],
-      ['Go to HEAD', 'Select the current HEAD commit'],
+      ['Go to HEAD', 'Locate the current HEAD commit'],
       ['Fetch remotes', 'Fetch from remotes'],
       ['Collapse references pane', 'Collapse references pane'],
       ['Collapse changed files pane', 'Collapse changed files pane'],

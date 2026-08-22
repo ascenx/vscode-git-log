@@ -81,6 +81,7 @@ interface WorkbenchState {
   selectedRepositoryId: string | undefined;
   refs: RefLabel[];
   commits: CommitSummary[];
+  commitListRevision: number;
   selectedHash: string | undefined;
   details: CommitDetails | undefined;
   detailsRepositoryId: string | undefined;
@@ -140,6 +141,7 @@ const initialState: WorkbenchState = {
   selectedRepositoryId: undefined,
   refs: [],
   commits: [],
+  commitListRevision: 0,
   selectedHash: undefined,
   details: undefined,
   detailsRepositoryId: undefined,
@@ -467,6 +469,14 @@ export function App() {
   const [detailsHashCopyState, setDetailsHashCopyState] = useState<
     'idle' | 'copying' | 'copied'
   >('idle');
+  const [commitRevealTarget, setCommitRevealTarget] = useState<
+    {
+      repositoryId: string;
+      hash: string;
+      requestId: number;
+      minimumListRevision: number;
+    } | undefined
+  >();
   const [collapsedRefGroups, setCollapsedRefGroups] = useState<Set<string>>(new Set());
   const [collapsedRefFolders, setCollapsedRefFolders] = useState<Set<string>>(new Set());
   const [responsiveCollapse, setResponsiveCollapse] = useState(() => ({
@@ -515,9 +525,14 @@ export function App() {
   const activeCommitMessagesRequest = useRef<string | undefined>(undefined);
   const stashDialogRepository = useRef<string | undefined>(undefined);
   const commitSelectionAnchor = useRef<string | undefined>(undefined);
+  const commitRevealSequence = useRef(0);
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
+  const visibleCommitRevealTarget =
+    !state.history && commitRevealTarget?.repositoryId === state.selectedRepositoryId
+      ? commitRevealTarget
+      : undefined;
   const refSearchActive = Boolean(refSearch.trim());
   const visibleRefs = useMemo(() => {
     const query = refSearch.trim().toLocaleLowerCase();
@@ -809,6 +824,7 @@ export function App() {
             filters: defaultFilters,
             refs: [],
             commits: [],
+            commitListRevision: current.commitListRevision + 1,
             details: undefined,
             detailsRepositoryId: undefined,
             selectedParent: undefined,
@@ -922,6 +938,9 @@ export function App() {
               refs: message.refs,
               filters: preservesPendingFilters ? current.filters : message.filters,
               commits: commitWindow.commits,
+              commitListRevision: message.replace
+                ? current.commitListRevision + 1
+                : current.commitListRevision,
               nextLogOffset: commitWindow.nextLogOffset,
               startLogOffset: commitWindow.startLogOffset,
               graphContinuation: commitWindow.graphContinuation,
@@ -965,6 +984,7 @@ export function App() {
                 selectedRepositoryId,
                 refs: [],
                 commits: [],
+                commitListRevision: current.commitListRevision + 1,
                 nextLogOffset: 0,
                 startLogOffset: 0,
                 graphContinuation: undefined,
@@ -1330,6 +1350,7 @@ export function App() {
       scrollPersistTimer.current = undefined;
     }
     pendingScrollPosition.current = undefined;
+    setCommitRevealTarget(undefined);
     setContextMenu(undefined);
     setNamedOperation(undefined);
     setFilterPopup(undefined);
@@ -1349,6 +1370,7 @@ export function App() {
       selectedRepositoryId: repositoryId,
       refs: [],
       commits: [],
+      commitListRevision: current.commitListRevision + 1,
       nextLogOffset: 0,
       startLogOffset: 0,
       graphContinuation: undefined,
@@ -1555,8 +1577,19 @@ export function App() {
   };
 
   const goToHead = (): void => {
-    if (!selectedRepository?.head) return;
-    selectHash(selectedRepository.head, 'head');
+    if (!state.selectedRepositoryId || !selectedRepository?.head) return;
+    const repositoryId = state.selectedRepositoryId;
+    const head = selectedRepository.head;
+    commitRevealSequence.current += 1;
+    setCommitRevealTarget({
+      repositoryId,
+      hash: head,
+      requestId: commitRevealSequence.current,
+      minimumListRevision:
+        state.commitListRevision +
+        (pendingFiltersRef.current?.repositoryId === repositoryId ? 1 : 0),
+    });
+    selectHash(head, 'head');
   };
 
   const loadMore = (): void => {
@@ -2184,7 +2217,7 @@ export function App() {
         <button
           type="button"
           aria-label="Go to HEAD"
-          title="Select the current HEAD commit"
+          title="Locate the current HEAD commit"
           disabled={!selectedRepository?.head}
           onClick={goToHead}
         >
@@ -2635,6 +2668,14 @@ export function App() {
                   ? `history:${state.history.repositoryId}:${state.history.path}`
                   : `log:${state.selectedRepositoryId ?? ''}:${String(state.startLogOffset)}`
               }
+              {...(visibleCommitRevealTarget
+                ? {
+                    revealTarget: {
+                      ...visibleCommitRevealTarget,
+                      listRevision: state.commitListRevision,
+                    },
+                  }
+                : {})}
               onScrollTopChange={handleCommitScrollTopChange}
               onHorizontalScroll={syncLogHeaderScroll}
               onSelect={selectCommit}
@@ -3596,6 +3637,20 @@ export function App() {
                     }
                   >
                     Delete…
+                  </button>
+                  <button
+                    type="button"
+                    role="menuitem"
+                    disabled={contextMenu.ref.isCurrent}
+                    title="Delete this branch even if it is not fully merged"
+                    onClick={() =>
+                      runOperation(
+                        { kind: 'deleteBranch', name: contextMenu.ref.shortName, force: true },
+                        contextMenu.repositoryId,
+                      )
+                    }
+                  >
+                    Force Delete…
                   </button>
                     </>
                   ) : null}
