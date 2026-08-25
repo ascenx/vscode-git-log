@@ -20,6 +20,7 @@ const DEFAULT_LAYOUT: WorkbenchLayout = {
   refsWidth: 220,
   filesWidth: 320,
   detailsHeight: 156,
+  detailsPlacement: 'bottom',
   filesViewMode: 'tree',
   refsColumnWidth: 150,
   authorColumnWidth: 130,

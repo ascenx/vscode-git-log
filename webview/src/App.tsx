@@ -49,6 +49,7 @@ const defaultLayout: WorkbenchLayout = {
   refsWidth: 220,
   filesWidth: 320,
   detailsHeight: 156,
+  detailsPlacement: 'bottom',
   filesViewMode: 'tree',
   refsColumnWidth: 150,
   authorColumnWidth: 130,
@@ -618,6 +619,8 @@ export function App() {
   const filesCollapsed = Boolean(
     state.layout.filesCollapsed || (responsiveCollapse.files && !responsiveExpanded.files),
   );
+  const detailsPlacement = state.layout.detailsPlacement ?? 'bottom';
+  const detailsInChanges = detailsPlacement === 'changes';
   useEffect(() => {
     if (!filterPopup) return;
     const updatePosition = (): void => {
@@ -809,6 +812,11 @@ export function App() {
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
           selectedRepositoryIdRef.current = message.selectedRepositoryId;
+          if (message.layout.detailsPlacement === 'changes') {
+            setResponsiveExpanded((current) =>
+              current.files ? current : { ...current, files: true },
+            );
+          }
           setState((current) => ({
             ...current,
             repositories: message.repositories,
@@ -1623,6 +1631,18 @@ export function App() {
     send({ type: 'updateLayout', requestId: requestId('layout'), layout });
   };
 
+  const toggleDetailsPlacement = (): void => {
+    const nextPlacement = detailsInChanges ? 'bottom' : 'changes';
+    if (nextPlacement === 'changes' && responsiveCollapse.files) {
+      setResponsiveExpanded((current) => ({ ...current, files: true }));
+    }
+    persistLayout({
+      ...state.layout,
+      detailsPlacement: nextPlacement,
+      ...(nextPlacement === 'changes' ? { filesCollapsed: false } : {}),
+    });
+  };
+
   const toggleResponsivePane = (pane: 'refs' | 'files'): void => {
     const layoutKey = pane === 'refs' ? 'refsCollapsed' : 'filesCollapsed';
     const responsive = responsiveCollapse[pane];
@@ -2302,10 +2322,185 @@ export function App() {
     </header>
   );
 
+  const detailsPlacementLabel = detailsInChanges
+    ? 'Move commit details to bottom'
+    : 'Move commit details below changed files';
+  const detailsPlacementButton = (
+    <button
+      type="button"
+      className="details-placement-button"
+      aria-label={detailsPlacementLabel}
+      title={detailsPlacementLabel}
+      onClick={toggleDetailsPlacement}
+    >
+      <span
+        className={`details-placement-icon${detailsInChanges ? ' to-bottom' : ''}`}
+        aria-hidden="true"
+      >
+        ⇥
+      </span>
+    </button>
+  );
+  const commitDetailsResizer = (
+    <div
+      className="pane-resizer horizontal details-resizer"
+      style={detailsInChanges ? { gridRow: 5 } : undefined}
+      role="separator"
+      aria-label="Resize commit details pane"
+      aria-orientation="horizontal"
+      aria-valuemin={100}
+      aria-valuenow={state.layout.detailsHeight}
+      tabIndex={0}
+      onPointerDown={(event) => beginResize('detailsHeight', event)}
+      onKeyDown={(event) => {
+        if (event.key === 'ArrowUp') resizeLayout('detailsHeight', 10);
+        if (event.key === 'ArrowDown') resizeLayout('detailsHeight', -10);
+      }}
+    />
+  );
+  const commitDetailsPane = (
+    <section
+      className="details-pane pane"
+      style={detailsInChanges ? { gridRow: 6 } : undefined}
+      role="region"
+      aria-label="Commit details"
+      tabIndex={-1}
+    >
+      {state.details ? (
+        <div className="details-content">
+          <div className="details-heading-row">
+            <div className="details-message">{state.details.subject}</div>
+            <div className="details-actions" role="toolbar" aria-label="Commit actions">
+              {detailsPlacementButton}
+              <button
+                type="button"
+                aria-label="Cherry-pick selected commit"
+                disabled={
+                  selectedRepository?.isBare ||
+                  Boolean(selectedRepository?.operationState) ||
+                  selectedOperationInFlight
+                }
+                onClick={() =>
+                  runOperation(
+                    { kind: 'cherryPick', hash: state.details?.hash ?? '' },
+                    state.detailsRepositoryId,
+                  )
+                }
+              >
+                Cherry-pick
+              </button>
+              <button
+                type="button"
+                aria-label="Revert selected commit"
+                disabled={
+                  selectedRepository?.isBare ||
+                  Boolean(selectedRepository?.operationState) ||
+                  selectedOperationInFlight
+                }
+                onClick={() =>
+                  runOperation(
+                    { kind: 'revert', hash: state.details?.hash ?? '' },
+                    state.detailsRepositoryId,
+                  )
+                }
+              >
+                Revert
+              </button>
+            </div>
+          </div>
+          <div className="details-meta">
+            <span>Author: {state.details.authorName} &lt;{state.details.authorEmail}&gt;</span>
+            <span>Authored: {formatCommitDate(state.details.authorTime)}</span>
+            <span>
+              Committer: {state.details.committerName} &lt;{state.details.committerEmail}&gt;
+            </span>
+            <span>Committed: {formatCommitDate(state.details.commitTime)}</span>
+            <span className="details-hash">
+              <code>{state.details.hash}</code>
+              <button
+                type="button"
+                aria-label="Copy full commit hash"
+                disabled={detailsHashCopyState === 'copying'}
+                onClick={() => {
+                  const copyRequestId = requestId('copy-hash');
+                  detailsHashCopyRequest.current = copyRequestId;
+                  if (detailsHashCopyTimer.current !== undefined) {
+                    window.clearTimeout(detailsHashCopyTimer.current);
+                    detailsHashCopyTimer.current = undefined;
+                  }
+                  setDetailsHashCopyState('copying');
+                  send({
+                    type: 'copyToClipboard',
+                    requestId: copyRequestId,
+                    text: state.details?.hash ?? '',
+                  });
+                }}
+              >
+                {detailsHashCopyState === 'copying'
+                  ? 'Copying…'
+                  : detailsHashCopyState === 'copied'
+                    ? 'Copied'
+                    : 'Copy'}
+              </button>
+            </span>
+            {state.details.parents.length ? (
+              <span className="details-parents">
+                Parents:{' '}
+                {state.details.parents.map((parent) => (
+                  <button
+                    type="button"
+                    aria-label={`Parent ${parent}`}
+                    title={parent}
+                    key={parent}
+                    onClick={() => selectHash(parent, 'parent')}
+                  >
+                    {parent.slice(0, 8)}
+                  </button>
+                ))}
+              </span>
+            ) : (
+              <span>Parents: root commit</span>
+            )}
+            {state.details.refs.length ? (
+              <span className="details-refs">
+                Refs: {state.details.refs.map((ref) => <span key={ref.fullName}>{ref.shortName}</span>)}
+              </span>
+            ) : null}
+            <span>Signature: {state.details.signature}</span>
+          </div>
+          <div className="details-body">
+            {state.details.body
+              .split(/\r?\n/u)
+              .filter((line, index) => index > 0 && line.length > 0)
+              .map((line, index) => (
+                <p key={`${String(index)}:${line}`}>{line}</p>
+              ))}
+          </div>
+        </div>
+      ) : (
+        <>
+          <div className="details-heading-row">
+            <div className="details-message">Commit Details</div>
+            <div className="details-actions" role="toolbar" aria-label="Commit actions">
+              {detailsPlacementButton}
+            </div>
+          </div>
+          <div className="details-placeholder">Select a commit to view its message and metadata.</div>
+        </>
+      )}
+    </section>
+  );
+
   return (
     <main
-      className={`workbench-shell${filesCollapsed ? ' files-collapsed' : ''}`}
-      style={{ gridTemplateRows: `minmax(0, 1fr) 4px ${state.layout.detailsHeight}px` }}
+      className={`workbench-shell${filesCollapsed ? ' files-collapsed' : ''}${
+        detailsInChanges ? ' details-in-changes' : ''
+      }`}
+      style={{
+        gridTemplateRows: detailsInChanges
+          ? 'minmax(0, 1fr)'
+          : `minmax(0, 1fr) 4px ${state.layout.detailsHeight}px`,
+      }}
       onKeyDown={handleWorkbenchKeyDown}
       onWheelCapture={(event) => {
         const target = event.target;
@@ -2746,10 +2941,17 @@ export function App() {
         />
 
         <section
-          className="files-pane pane"
+          className={`files-pane pane${detailsInChanges ? ' with-details' : ''}`}
           role="region"
           aria-label="Changed files"
           hidden={filesCollapsed}
+          style={
+            detailsInChanges
+              ? {
+                  gridTemplateRows: `38px 30px minmax(0, 1fr) auto 4px ${state.layout.detailsHeight}px`,
+                }
+              : undefined
+          }
         >
           <div className="global-toolbar-spacer" aria-hidden="true" />
           <div className="pane-heading files-heading">
@@ -2870,6 +3072,8 @@ export function App() {
               ) : null}
             </div>
           ) : null}
+          {detailsInChanges ? commitDetailsResizer : null}
+          {detailsInChanges ? commitDetailsPane : null}
         </section>
       </section>
 
@@ -2879,144 +3083,8 @@ export function App() {
         </div>
       ) : null}
 
-      <div
-        className="pane-resizer horizontal"
-        role="separator"
-        aria-label="Resize commit details pane"
-        aria-orientation="horizontal"
-        aria-valuemin={100}
-        aria-valuenow={state.layout.detailsHeight}
-        tabIndex={0}
-        onPointerDown={(event) => beginResize('detailsHeight', event)}
-        onKeyDown={(event) => {
-          if (event.key === 'ArrowUp') resizeLayout('detailsHeight', 10);
-          if (event.key === 'ArrowDown') resizeLayout('detailsHeight', -10);
-        }}
-      />
-
-      <section
-        className="details-pane pane"
-        role="region"
-        aria-label="Commit details"
-        tabIndex={-1}
-      >
-        {state.details ? (
-          <div className="details-content">
-            <div className="details-heading-row">
-              <div className="details-message">{state.details.subject}</div>
-              <div className="details-actions" role="toolbar" aria-label="Commit actions">
-                <button
-                  type="button"
-                  aria-label="Cherry-pick selected commit"
-                  disabled={
-                    selectedRepository?.isBare ||
-                    Boolean(selectedRepository?.operationState) ||
-                    selectedOperationInFlight
-                  }
-                  onClick={() =>
-                    runOperation(
-                      { kind: 'cherryPick', hash: state.details?.hash ?? '' },
-                      state.detailsRepositoryId,
-                    )
-                  }
-                >
-                  Cherry-pick
-                </button>
-                <button
-                  type="button"
-                  aria-label="Revert selected commit"
-                  disabled={
-                    selectedRepository?.isBare ||
-                    Boolean(selectedRepository?.operationState) ||
-                    selectedOperationInFlight
-                  }
-                  onClick={() =>
-                    runOperation(
-                      { kind: 'revert', hash: state.details?.hash ?? '' },
-                      state.detailsRepositoryId,
-                    )
-                  }
-                >
-                  Revert
-                </button>
-              </div>
-            </div>
-            <div className="details-meta">
-              <span>Author: {state.details.authorName} &lt;{state.details.authorEmail}&gt;</span>
-              <span>Authored: {formatCommitDate(state.details.authorTime)}</span>
-              <span>
-                Committer: {state.details.committerName} &lt;{state.details.committerEmail}&gt;
-              </span>
-              <span>Committed: {formatCommitDate(state.details.commitTime)}</span>
-              <span className="details-hash">
-                <code>{state.details.hash}</code>
-                <button
-                  type="button"
-                  aria-label="Copy full commit hash"
-                  disabled={detailsHashCopyState === 'copying'}
-                  onClick={() => {
-                    const copyRequestId = requestId('copy-hash');
-                    detailsHashCopyRequest.current = copyRequestId;
-                    if (detailsHashCopyTimer.current !== undefined) {
-                      window.clearTimeout(detailsHashCopyTimer.current);
-                      detailsHashCopyTimer.current = undefined;
-                    }
-                    setDetailsHashCopyState('copying');
-                    send({
-                      type: 'copyToClipboard',
-                      requestId: copyRequestId,
-                      text: state.details?.hash ?? '',
-                    });
-                  }}
-                >
-                  {detailsHashCopyState === 'copying'
-                    ? 'Copying…'
-                    : detailsHashCopyState === 'copied'
-                      ? 'Copied'
-                      : 'Copy'}
-                </button>
-              </span>
-              {state.details.parents.length ? (
-                <span className="details-parents">
-                  Parents:{' '}
-                  {state.details.parents.map((parent) => (
-                    <button
-                      type="button"
-                      aria-label={`Parent ${parent}`}
-                      title={parent}
-                      key={parent}
-                      onClick={() => selectHash(parent, 'parent')}
-                    >
-                      {parent.slice(0, 8)}
-                    </button>
-                  ))}
-                </span>
-              ) : (
-                <span>Parents: root commit</span>
-              )}
-              {state.details.refs.length ? (
-                <span className="details-refs">
-                  Refs: {state.details.refs.map((ref) => <span key={ref.fullName}>{ref.shortName}</span>)}
-                </span>
-              ) : null}
-              <span>Signature: {state.details.signature}</span>
-            </div>
-            <div className="details-body">
-              {state.details.body
-                .split(/\r?\n/u)
-                .filter((line, index) => index > 0 && line.length > 0)
-                .map((line, index) => (
-                  <p key={`${String(index)}:${line}`}>{line}</p>
-                ))}
-            </div>
-          </div>
-        ) : (
-          <>
-            <div className="details-message">Commit Details</div>
-            <div className="details-placeholder">Select a commit to view its message and metadata.</div>
-          </>
-        )}
-      </section>
+      {!detailsInChanges ? commitDetailsResizer : null}
+      {!detailsInChanges ? commitDetailsPane : null}
 
       {contextMenu ? (
         <div

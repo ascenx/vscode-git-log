@@ -32,6 +32,7 @@ export interface WorkbenchLayout {
   refsWidth: number;
   filesWidth: number;
   detailsHeight: number;
+  detailsPlacement?: 'bottom' | 'changes';
   filesViewMode: 'tree' | 'list';
   commitColumnWidth?: number;
   refsColumnWidth?: number;
@@ -309,6 +310,9 @@ function isLayout(value: unknown): value is WorkbenchLayout {
     inRange(value.refsWidth, 120, 2000) &&
     inRange(value.filesWidth, 160, 3000) &&
     inRange(value.detailsHeight, 80, 2000) &&
+    (value.detailsPlacement === undefined ||
+      value.detailsPlacement === 'bottom' ||
+      value.detailsPlacement === 'changes') &&
     (value.filesViewMode === 'tree' || value.filesViewMode === 'list') &&
     (value.commitColumnWidth === undefined || inRange(value.commitColumnWidth, 160, 2000)) &&
     (value.refsColumnWidth === undefined || inRange(value.refsColumnWidth, 40, 2000)) &&

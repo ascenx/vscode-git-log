@@ -171,6 +171,142 @@ describe('WorkbenchApp', () => {
     expect(screen.getByText('Tags')).toBeInTheDocument();
   });
 
+  it('moves commit details below changed files and persists the selected placement', () => {
+    render(<App />);
+
+    const changedFiles = screen.getByRole('region', { name: 'Changed files' });
+    const commitDetails = screen.getByRole('region', { name: 'Commit details' });
+    expect(changedFiles).not.toContainElement(commitDetails);
+
+    postedMessages.length = 0;
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Move commit details below changed files' }),
+    );
+
+    expect(screen.getByRole('region', { name: 'Changed files' })).toContainElement(
+      screen.getByRole('region', { name: 'Commit details' }),
+    );
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'updateLayout',
+      layout: expect.objectContaining({ detailsPlacement: 'changes' }),
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Move commit details to bottom' }));
+
+    expect(screen.getByRole('region', { name: 'Changed files' })).not.toContainElement(
+      screen.getByRole('region', { name: 'Commit details' }),
+    );
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'updateLayout',
+      layout: expect.objectContaining({ detailsPlacement: 'bottom' }),
+    });
+  });
+
+  it('keeps commit details in the reserved rows when no changed file is selected', () => {
+    render(<App />);
+
+    fireEvent.click(
+      screen.getByRole('button', { name: 'Move commit details below changed files' }),
+    );
+
+    expect(screen.queryByRole('status', { name: 'Changed file preview' })).not.toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: 'Resize commit details pane' })).toHaveStyle({
+      gridRow: '5',
+    });
+    expect(screen.getByRole('region', { name: 'Commit details' })).toHaveStyle({
+      gridRow: '6',
+    });
+  });
+
+  it('uses matching arrow-to-bar icons for both commit details placements', () => {
+    render(<App />);
+
+    const moveToChanges = screen.getByRole('button', {
+      name: 'Move commit details below changed files',
+    });
+    expect(moveToChanges).toHaveTextContent('⇥');
+    expect(moveToChanges.querySelector('.details-placement-icon')).not.toHaveClass('to-bottom');
+
+    fireEvent.click(moveToChanges);
+
+    const moveToBottom = screen.getByRole('button', { name: 'Move commit details to bottom' });
+    expect(moveToBottom).toHaveTextContent('⇥');
+    expect(moveToBottom.querySelector('.details-placement-icon')).toHaveClass('to-bottom');
+  });
+
+  it('restores commit details below changed files from the persisted layout', () => {
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-details-placement',
+            repositories: [],
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              detailsPlacement: 'changes',
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByRole('region', { name: 'Changed files' })).toContainElement(
+      screen.getByRole('region', { name: 'Commit details' }),
+    );
+    expect(
+      screen.getByRole('button', { name: 'Move commit details to bottom' }),
+    ).toBeInTheDocument();
+  });
+
+  it('reveals persisted commit details below changed files at narrow widths', () => {
+    Object.defineProperty(window, 'matchMedia', {
+      configurable: true,
+      value: vi.fn((query: string) => ({
+        matches: query === '(max-width: 900px)',
+        media: query,
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    });
+    render(<App />);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-narrow-details-placement',
+            repositories: [],
+            pageSize: 500,
+            maxCachedCommits: 5000,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              detailsPlacement: 'changes',
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+
+    const changedFiles = screen.getByRole('region', { name: 'Changed files' });
+    expect(changedFiles).toContainElement(screen.getByRole('region', { name: 'Commit details' }));
+    expect(document.querySelector('.workbench-shell')).not.toHaveClass('files-collapsed');
+  });
+
   it('creates and inspects stashes from the global toolbar', () => {
     render(<App />);
     const stashHash = 'a'.repeat(40);

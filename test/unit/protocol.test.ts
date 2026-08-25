@@ -349,6 +349,35 @@ describe('parseWebviewMessage', () => {
     expect(
       parseWebviewMessage({
         type: 'updateLayout',
+        requestId: 'layout-details-placement',
+        layout: {
+          refsWidth: 220,
+          filesWidth: 320,
+          detailsHeight: 156,
+          detailsPlacement: 'changes',
+          filesViewMode: 'tree',
+        },
+      }),
+    ).toMatchObject({
+      type: 'updateLayout',
+      layout: expect.objectContaining({ detailsPlacement: 'changes' }),
+    });
+    expect(
+      parseWebviewMessage({
+        type: 'updateLayout',
+        requestId: 'layout-invalid-details-placement',
+        layout: {
+          refsWidth: 220,
+          filesWidth: 320,
+          detailsHeight: 156,
+          detailsPlacement: 'left',
+          filesViewMode: 'tree',
+        },
+      }),
+    ).toBeUndefined();
+    expect(
+      parseWebviewMessage({
+        type: 'updateLayout',
         requestId: 'layout-hidden-columns',
         layout: {
           refsWidth: 220,
