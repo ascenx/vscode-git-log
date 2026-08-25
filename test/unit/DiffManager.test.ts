@@ -1,11 +1,26 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-const { createWebviewPanel, executeCommand, panel, receiveMessage, revealRange } = vi.hoisted(() => {
+const {
+  createWebviewPanel,
+  executeCommand,
+  fireTabChange,
+  panel,
+  receiveMessage,
+  revealRange,
+  tabGroups,
+} = vi.hoisted(() => {
+  type TabChange = {
+    opened: readonly unknown[];
+    closed: readonly unknown[];
+    changed: readonly unknown[];
+  };
   let messageHandler: ((message: unknown) => Promise<void> | void) | undefined;
+  let tabChangeHandler: ((event: TabChange) => void) | undefined;
   const panel = {
     webview: {
       cspSource: 'vscode-webview:',
       html: '',
+      postMessage: vi.fn(),
       onDidReceiveMessage: vi.fn((handler: (message: unknown) => Promise<void> | void) => {
         messageHandler = handler;
         return { dispose: vi.fn() };
@@ -18,7 +33,16 @@ const { createWebviewPanel, executeCommand, panel, receiveMessage, revealRange }
   return {
     createWebviewPanel: vi.fn(() => panel),
     executeCommand: vi.fn(),
+    fireTabChange: (event: TabChange) => tabChangeHandler?.(event),
     revealRange: vi.fn(),
+    tabGroups: {
+      all: [{}, {}],
+      activeTabGroup: { activeTab: undefined as unknown },
+      onDidChangeTabs: vi.fn((handler: (event: TabChange) => void) => {
+        tabChangeHandler = handler;
+        return { dispose: vi.fn() };
+      }),
+    },
     panel,
     receiveMessage: async (message: unknown) => messageHandler?.(message),
   };
@@ -39,7 +63,11 @@ vi.mock('vscode', () => ({
       readonly endCharacter: number,
     ) {}
   },
-  window: { createWebviewPanel, activeTextEditor: { revealRange, document: { lineCount: 100 } } },
+  window: {
+    createWebviewPanel,
+    activeTextEditor: { revealRange, document: { lineCount: 100 } },
+    tabGroups,
+  },
   Uri: {
     from(value: { scheme: string; path: string; query?: string }) {
       return { ...value };
@@ -57,6 +85,9 @@ describe('DiffManager', () => {
     revealRange.mockReset();
     vi.mocked(vscode.workspace.getConfiguration).mockClear();
     panel.webview.html = '';
+    panel.webview.postMessage.mockReset();
+    tabGroups.all = [{}, {}];
+    tabGroups.activeTabGroup.activeTab = undefined;
   });
 
   it('keeps every selected file diff in the same second editor group', async () => {
@@ -98,6 +129,7 @@ describe('DiffManager', () => {
     expect(panel.webview.html).toContain('.file-directory[open] > summary::before');
     expect(panel.webview.html).toContain('file-stat-additions">+2');
     expect(panel.webview.html).toContain('file-stat-deletions">-1');
+    expect(panel.webview.html).toContain('data-open-all-comparisons');
 
     await receiveMessage({ type: 'openComparisonFile', index: 0 });
     await receiveMessage({ type: 'openComparisonFile', index: 1 });
@@ -107,6 +139,92 @@ describe('DiffManager', () => {
       expect(call[0]).toBe('vscode.diff');
       expect(call[4]).toEqual({ preview: true, viewColumn: 2 });
     }
+  });
+
+  it('opens every text file in the native changes editor in the second editor group', async () => {
+    await new DiffManager().openCommit(
+      'repo-1',
+      { parent: 'a'.repeat(40), hash: 'b'.repeat(40) },
+      [
+        {
+          status: 'A',
+          path: 'src/new.ts',
+          additions: 2,
+          deletions: 0,
+          binary: false,
+        },
+        {
+          status: 'R',
+          oldPath: 'src/old-name.ts',
+          path: 'src/new-name.ts',
+          additions: 1,
+          deletions: 1,
+          binary: false,
+        },
+        {
+          status: 'M',
+          path: 'assets/logo.png',
+          binary: true,
+        },
+      ],
+    );
+
+    await receiveMessage({ type: 'openAllComparisonFiles' });
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'workbench.action.focusSecondEditorGroup');
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      'vscode.changes',
+      `Git Changes (${'a'.repeat(8)} ↔ ${'b'.repeat(8)})`,
+      [
+        [
+          expect.objectContaining({ path: '/src/new.ts', query: expect.stringContaining('empty=0') }),
+          expect.objectContaining({ path: '/src/new.ts', query: expect.stringContaining('empty=1') }),
+          expect.objectContaining({ path: '/src/new.ts', query: expect.stringContaining('empty=0') }),
+        ],
+        [
+          expect.objectContaining({ path: '/src/new-name.ts', query: expect.stringContaining('path=src%2Fnew-name.ts') }),
+          expect.objectContaining({ path: '/src/old-name.ts', query: expect.stringContaining('path=src%2Fold-name.ts') }),
+          expect.objectContaining({ path: '/src/new-name.ts', query: expect.stringContaining('path=src%2Fnew-name.ts') }),
+        ],
+      ],
+    );
+  });
+
+  it('creates a second editor group before opening all comparison files when needed', async () => {
+    tabGroups.all = [{}];
+    await new DiffManager().openCommit(
+      'repo-1',
+      { parent: 'a'.repeat(40), hash: 'b'.repeat(40) },
+      [{ status: 'M', path: 'app.ts', binary: false }],
+    );
+
+    await receiveMessage({ type: 'openAllComparisonFiles' });
+
+    expect(executeCommand).toHaveBeenNthCalledWith(1, 'workbench.action.newGroupRight');
+    expect(executeCommand).toHaveBeenNthCalledWith(
+      2,
+      'vscode.changes',
+      expect.any(String),
+      expect.any(Array),
+    );
+  });
+
+  it('clears the all changes selection when its native changes tab closes', async () => {
+    const allChangesTab = { label: `Git Changes (${'a'.repeat(8)} ↔ ${'b'.repeat(8)})` };
+    tabGroups.activeTabGroup.activeTab = { label: 'Previous editor' };
+    await new DiffManager().openCommit(
+      'repo-1',
+      { parent: 'a'.repeat(40), hash: 'b'.repeat(40) },
+      [{ status: 'M', path: 'app.ts', binary: false }],
+    );
+
+    await receiveMessage({ type: 'openAllComparisonFiles' });
+    fireTabChange({ opened: [allChangesTab], closed: [], changed: [] });
+    fireTabChange({ opened: [], closed: [allChangesTab], changed: [] });
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith({ type: 'comparisonAllClosed' });
+    expect(panel.webview.html).toContain("message?.type === 'comparisonAllClosed'");
   });
 
   it('compares a selected revision or empty side with the current working file', async () => {

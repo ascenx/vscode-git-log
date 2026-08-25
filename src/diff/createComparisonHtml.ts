@@ -279,6 +279,9 @@ export function createComparisonHtml(options: {
   nonce: string;
 }): string {
   const rows = renderDirectory(buildFileTree(options.files));
+  const textFileCount = options.files.filter((file) => !file.binary).length;
+  const binaryFileCount = options.files.length - textFileCount;
+  const binarySummary = binaryFileCount > 0 ? ` · ${String(binaryFileCount)} binary omitted` : '';
 
   return `<!doctype html>
 <html lang="en">
@@ -293,9 +296,16 @@ export function createComparisonHtml(options: {
     html, body { width: 100%; height: 100%; margin: 0; }
     body { overflow: hidden; color: var(--vscode-foreground); background: var(--vscode-editor-background); font-family: var(--vscode-font-family); font-size: var(--vscode-font-size); }
     .comparison-shell { display: grid; grid-template-rows: auto minmax(0, 1fr); height: 100%; }
-    .comparison-header { padding: 10px 12px; border-bottom: 1px solid var(--vscode-panel-border); }
+    .comparison-header { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; padding: 10px 12px; gap: 8px; border-bottom: 1px solid var(--vscode-panel-border); }
+    .comparison-heading { min-width: 0; }
     .comparison-title { overflow: hidden; font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
     .comparison-summary { margin-top: 3px; color: var(--vscode-descriptionForeground); font-size: 0.9em; }
+    .comparison-mode-button { display: inline-flex; align-items: center; justify-content: center; height: 26px; padding: 0 8px; gap: 5px; border: 0; border-radius: 3px; color: var(--vscode-icon-foreground, currentColor); background: transparent; font: inherit; cursor: pointer; }
+    .comparison-mode-button:hover:not(:disabled) { background: var(--vscode-toolbar-hoverBackground); }
+    .comparison-mode-button.selected { color: var(--vscode-list-activeSelectionForeground); background: var(--vscode-list-activeSelectionBackground); }
+    .comparison-mode-button:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
+    .comparison-mode-button:disabled { opacity: 0.45; cursor: default; }
+    .comparison-mode-button svg { width: 16px; height: 16px; fill: currentColor; }
     .file-list { min-height: 0; overflow: auto; }
     .file-directory > summary { display: flex; align-items: center; height: var(--explorer-row-height); padding: 0 8px 0 0; overflow: hidden; font-weight: 400; white-space: nowrap; cursor: pointer; user-select: none; }
     .file-directory > summary::-webkit-details-marker { display: none; }
@@ -348,19 +358,39 @@ export function createComparisonHtml(options: {
   ${renderFileIconDefinitions()}
   <main class="comparison-shell">
     <header class="comparison-header">
-      <div class="comparison-title">${escapeHtml(options.title)}</div>
-      <div class="comparison-summary">${String(options.files.length)} changed files · Select a file to open its diff</div>
+      <div class="comparison-heading">
+        <div class="comparison-title">${escapeHtml(options.title)}</div>
+        <div class="comparison-summary">${String(options.files.length)} changed files${binarySummary} · Select a file or show all changes</div>
+      </div>
+      <button class="comparison-mode-button" type="button" data-open-all-comparisons aria-label="Show all changes" title="Show all text changes"${textFileCount > 0 ? '' : ' disabled'}>
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M2 2h5v5H2V2Zm1 1v3h3V3H3Zm6-1h5v5H9V2Zm1 1v3h3V3h-3ZM2 9h5v5H2V9Zm1 1v3h3v-3H3Zm6-1h5v5H9V9Zm1 1v3h3v-3h-3Z"/></svg>
+        <span>All Changes</span>
+      </button>
     </header>
     <section class="file-list" aria-label="Changed files">${rows || '<div class="empty">No changed files</div>'}</section>
   </main>
   <script nonce="${options.nonce}">
     const vscode = acquireVsCodeApi();
     document.addEventListener('click', (event) => {
+      const allChanges = event.target instanceof Element ? event.target.closest('[data-open-all-comparisons]') : null;
+      if (allChanges instanceof HTMLButtonElement && !allChanges.disabled) {
+        document.querySelectorAll('.file-row.selected').forEach((row) => row.classList.remove('selected'));
+        allChanges.classList.add('selected');
+        vscode.postMessage({ type: 'openAllComparisonFiles' });
+        return;
+      }
       const target = event.target instanceof Element ? event.target.closest('[data-file-index]') : null;
       if (!(target instanceof HTMLButtonElement) || target.disabled) return;
       document.querySelectorAll('.file-row.selected').forEach((row) => row.classList.remove('selected'));
+      document.querySelector('[data-open-all-comparisons]')?.classList.remove('selected');
       target.classList.add('selected');
       vscode.postMessage({ type: 'openComparisonFile', index: Number(target.dataset.fileIndex) });
+    });
+    window.addEventListener('message', (event) => {
+      const message = event.data;
+      if (message?.type === 'comparisonAllClosed') {
+        document.querySelector('[data-open-all-comparisons]')?.classList.remove('selected');
+      }
     });
   </script>
 </body>

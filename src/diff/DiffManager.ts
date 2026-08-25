@@ -41,8 +41,28 @@ function sideUri(repositoryId: string, side: DiffSide): vscode.Uri {
   });
   return vscode.Uri.from({
     scheme: REVISION_SCHEME,
-    path: `/${basename(side.path)}`,
+    path: `/${side.path}`,
     query,
+  });
+}
+
+function comparisonResources(
+  repositoryId: string,
+  request: { hash: string; parent: string },
+  files: readonly ChangedFile[],
+): readonly (readonly [vscode.Uri, vscode.Uri, vscode.Uri])[] {
+  return files.flatMap((file) => {
+    if (file.binary) return [];
+    const sides = buildDiffSides({
+      hash: request.hash,
+      parent: request.parent,
+      path: file.path,
+      ...(file.oldPath ? { oldPath: file.oldPath } : {}),
+      status: file.status,
+    });
+    const original = sideUri(repositoryId, sides.left);
+    const modified = sideUri(repositoryId, sides.right);
+    return [[modified, original, modified] as const];
   });
 }
 
@@ -149,11 +169,41 @@ export class DiffManager {
       files,
       nonce: randomBytes(18).toString('base64url'),
     });
+    let allChangesTab: vscode.Tab | undefined;
+    let waitingForAllChangesTab = false;
+    const tabChangeSubscription = vscode.window.tabGroups.onDidChangeTabs((event) => {
+      if (waitingForAllChangesTab) {
+        const matchingTab = [...event.opened, ...event.changed].find((tab) => tab.label === title);
+        if (matchingTab) {
+          allChangesTab = matchingTab;
+          waitingForAllChangesTab = false;
+        }
+      }
+      if (!allChangesTab || !event.closed.includes(allChangesTab)) return;
+      allChangesTab = undefined;
+      void panel.webview.postMessage({ type: 'comparisonAllClosed' });
+    });
     const messageSubscription = panel.webview.onDidReceiveMessage(async (message: unknown) => {
       if (
         typeof message !== 'object' ||
         message === null ||
-        !('type' in message) ||
+        !('type' in message)
+      ) {
+        return;
+      }
+      if (message.type === 'openAllComparisonFiles') {
+        const resources = comparisonResources(repositoryId, request, files);
+        if (!resources.length) return;
+        await vscode.commands.executeCommand(
+          vscode.window.tabGroups.all.length < 2
+            ? 'workbench.action.newGroupRight'
+            : 'workbench.action.focusSecondEditorGroup',
+        );
+        waitingForAllChangesTab = true;
+        await vscode.commands.executeCommand('vscode.changes', title, resources);
+        return;
+      }
+      if (
         message.type !== 'openComparisonFile' ||
         !('index' in message) ||
         !Number.isInteger(message.index)
@@ -175,6 +225,7 @@ export class DiffManager {
       );
     });
     panel.onDidDispose(() => {
+      tabChangeSubscription.dispose();
       messageSubscription.dispose();
       if (this.comparisonPanel === panel) this.comparisonPanel = undefined;
     });
