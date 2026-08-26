@@ -28,6 +28,19 @@ const blame = {
 };
 
 describe('CurrentLineBlameController', () => {
+  it('uses the custom decoration only when built-in Git blame is disabled', async () => {
+    const { CURRENT_LINE_BLAME_CONFIGURATION_KEYS, shouldUseCustomLineBlame } =
+      await import('../../src/editor/CurrentLineBlameController');
+
+    expect(shouldUseCustomLineBlame(true, false)).toBe(true);
+    expect(shouldUseCustomLineBlame(true, true)).toBe(false);
+    expect(shouldUseCustomLineBlame(false, false)).toBe(false);
+    expect(CURRENT_LINE_BLAME_CONFIGURATION_KEYS).toEqual([
+      'gitLogWorkbench.currentLineBlame.enabled',
+      'git.blame.editorDecoration.enabled',
+    ]);
+  });
+
   it('renders inline blame and complete hover data for the active cursor line', async () => {
     const modulePath = '../../src/editor/CurrentLineBlameController';
     const controllerModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

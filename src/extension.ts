@@ -9,7 +9,9 @@ import {
 } from './diff/WorkingSnapshotContentProvider';
 import { EditorFileComparisonCommand } from './editor/EditorFileComparisonCommand';
 import {
+  CURRENT_LINE_BLAME_CONFIGURATION_KEYS,
   CurrentLineBlameController,
+  shouldUseCustomLineBlame,
   type CurrentLineBlamePresentation,
   type CurrentLineEditorSnapshot,
 } from './editor/CurrentLineBlameController';
@@ -81,6 +83,15 @@ export function activate(context: vscode.ExtensionContext): void {
   );
   const diffManager = new DiffManager();
   const editorContexts = new EditorGitContextService(runner);
+  const customLineBlameEnabled = (resource?: vscode.Uri): boolean =>
+    shouldUseCustomLineBlame(
+      vscode.workspace
+        .getConfiguration('gitLogWorkbench', resource)
+        .get<boolean>('currentLineBlame.enabled', true),
+      vscode.workspace
+        .getConfiguration('git', resource)
+        .get<boolean>('blame.editorDecoration.enabled', false),
+    );
   const lineBlameDecoration = vscode.window.createTextEditorDecorationType({
     rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
     after: {
@@ -127,15 +138,13 @@ export function activate(context: vscode.ExtensionContext): void {
     return `${editor.document.uri.toString()}:${String(editor.viewColumn ?? 0)}:${String(editor.document.version)}:${String(line)}`;
   };
   const editorSnapshot = (): CurrentLineEditorSnapshot | undefined => {
+    const editor = vscode.window.activeTextEditor;
     if (
-      !vscode.workspace
-        .getConfiguration('gitLogWorkbench')
-        .get<boolean>('currentLineBlame.enabled', true)
+      editor?.document.uri.scheme !== 'file' ||
+      !customLineBlameEnabled(editor.document.uri)
     ) {
       return undefined;
     }
-    const editor = vscode.window.activeTextEditor;
-    if (editor?.document.uri.scheme !== 'file') return undefined;
     if (editor.document.isDirty) {
       const finalLine = editor.document.lineAt(editor.document.lineCount - 1);
       if (
@@ -271,7 +280,7 @@ export function activate(context: vscode.ExtensionContext): void {
       );
     });
   };
-  if (configuration.get<boolean>('currentLineBlame.enabled', true)) {
+  if (customLineBlameEnabled()) {
     ensureGitStateSubscriptions();
   }
   const workingSnapshots = new WorkingSnapshotContentProvider(
@@ -436,7 +445,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.workspace.onDidChangeTextDocument((event) => {
       if (
         event.document.uri.scheme === 'file' &&
-        configuration.get<boolean>('currentLineBlame.enabled', true)
+        customLineBlameEnabled(event.document.uri)
       ) {
         const finalLine = event.document.lineAt(event.document.lineCount - 1);
         if (
@@ -463,8 +472,12 @@ export function activate(context: vscode.ExtensionContext): void {
       }
     }),
     vscode.workspace.onDidChangeConfiguration((event) => {
-      if (event.affectsConfiguration('gitLogWorkbench.currentLineBlame.enabled')) {
-        if (configuration.get<boolean>('currentLineBlame.enabled', true)) {
+      if (
+        CURRENT_LINE_BLAME_CONFIGURATION_KEYS.some((key) =>
+          event.affectsConfiguration(key),
+        )
+      ) {
+        if (customLineBlameEnabled()) {
           ensureGitStateSubscriptions();
         }
         scheduleLineBlame(0);

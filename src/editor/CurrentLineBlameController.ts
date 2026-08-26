@@ -5,6 +5,18 @@ import type { EditorGitContext, EditorGitContextService } from './EditorGitConte
 const MAX_CACHED_COMMIT_MESSAGES = 200;
 const MAX_CACHED_EDITOR_CONTEXTS = 50;
 
+export const CURRENT_LINE_BLAME_CONFIGURATION_KEYS = [
+  'gitLogWorkbench.currentLineBlame.enabled',
+  'git.blame.editorDecoration.enabled',
+] as const;
+
+export function shouldUseCustomLineBlame(
+  customEnabled: boolean,
+  builtInEnabled: boolean,
+): boolean {
+  return customEnabled && !builtInEnabled;
+}
+
 export interface CurrentLineEditorSnapshot {
   key: string;
   fsPath: string;
