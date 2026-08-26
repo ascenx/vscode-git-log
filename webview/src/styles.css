@@ -160,6 +160,15 @@ select:focus-visible,
   white-space: nowrap;
 }
 
+.history-toolbar .history-toolbar-close {
+  flex: 0 0 27px;
+  width: 27px;
+  padding: 0;
+  color: var(--vscode-icon-foreground, var(--vscode-foreground));
+  font-size: 20px;
+  line-height: 1;
+}
+
 .history-stats {
   display: inline-flex;
   margin-left: auto;

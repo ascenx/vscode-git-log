@@ -3,11 +3,12 @@ export interface DisposableLike {
 }
 
 export interface ExtensionRegistrationHost {
-  registerCommand(command: string, handler: () => unknown): DisposableLike;
+  registerCommand(command: string, handler: (...args: unknown[]) => unknown): DisposableLike;
   openWorkbench(): void;
   showLineHistory(): Promise<void>;
   showSelectionHistory(): Promise<void>;
-  showFileHistory(): Promise<void>;
+  showFileHistory(resource?: unknown): Promise<void>;
+  showFolderHistory(resource?: unknown): Promise<void>;
   compareFileWithRef(): void;
 }
 
@@ -25,7 +26,11 @@ export function registerExtension(host: ExtensionRegistrationHost): DisposableLi
   );
   const showFileHistoryCommand = host.registerCommand(
     'gitLogWorkbench.editor.showFileHistory',
-    () => host.showFileHistory(),
+    (resource?: unknown) => host.showFileHistory(resource),
+  );
+  const showFolderHistoryCommand = host.registerCommand(
+    'gitLogWorkbench.explorer.showFolderHistory',
+    (resource?: unknown) => host.showFolderHistory(resource),
   );
   const compareFileWithRefCommand = host.registerCommand(
     'gitLogWorkbench.editor.compareFileWithRef',
@@ -37,6 +42,7 @@ export function registerExtension(host: ExtensionRegistrationHost): DisposableLi
     showLineHistoryCommand,
     showSelectionHistoryCommand,
     showFileHistoryCommand,
+    showFolderHistoryCommand,
     compareFileWithRefCommand,
   ];
 }

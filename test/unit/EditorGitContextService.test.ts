@@ -65,6 +65,19 @@ describe('EditorGitContextService', () => {
     expect(context.repositoryPath).toBe('src/app.ts');
   });
 
+  it('resolves a repository root directory as the whole-repository path', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'git-log-editor-directory-root-'));
+    temporaryDirectories.push(root);
+    await execFileAsync('git', ['init', '-b', 'main'], { cwd: root });
+    const { EditorGitContextService } = await import('../../src/editor/EditorGitContextService');
+
+    const context = await new EditorGitContextService(new GitRunner()).resolveDirectory(root);
+
+    expect(context.repositoryRoot).toBe(await realpath(root));
+    expect(context.repositoryPath).toBe('.');
+    expect(context.absolutePath).toBe(root);
+  });
+
   it('resolves files inside a linked worktree and records the common Git directory', async () => {
     const root = await mkdtemp(join(tmpdir(), 'git-log-editor-worktree-'));
     temporaryDirectories.push(root);

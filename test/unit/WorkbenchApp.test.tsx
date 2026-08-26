@@ -504,6 +504,41 @@ describe('WorkbenchApp', () => {
     });
   });
 
+  it('restores every selected commit supplied by repository data', () => {
+    const { newest, oldest, commits } = initializeCommitRangeFixture();
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'restore-commit-selection',
+            repositoryId: 'repo-commit-range',
+            refs: [],
+            commits,
+            filters: { text: '', branches: [], authors: [], paths: [] },
+            selectedHash: newest,
+            selectedHashes: [newest, oldest],
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByText('newest commit').closest('[role="row"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+    expect(screen.getByText('middle commit').closest('[role="row"]')).toHaveAttribute(
+      'aria-selected',
+      'false',
+    );
+    expect(screen.getByText('oldest commit').closest('[role="row"]')).toHaveAttribute(
+      'aria-selected',
+      'true',
+    );
+  });
+
   it('prefills the squash dialog with complete commit messages from top to bottom', () => {
     const { newest, middle, oldest } = initializeCommitRangeFixture();
     const newestRow = screen.getByText('newest commit').closest('[role="row"]') as HTMLElement;
@@ -805,6 +840,113 @@ describe('WorkbenchApp', () => {
     expect(postedMessages).toContainEqual(
       expect.objectContaining({ type: 'closeHistory', repositoryId: 'repo-history' }),
     );
+  });
+
+  it('renders folder history as a normal log path filter and can return to prior state', () => {
+    render(<App />);
+    const repository = {
+      id: 'repo-folder-history',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      currentBranch: 'main',
+    };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'folderHistoryOpened',
+            requestId: 'folder-history-opened',
+            repository,
+            repositoryId: repository.id,
+            path: 'src/components',
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByText('Folder History · src/components')).toBeInTheDocument();
+    const closeButton = screen.getByRole('button', { name: 'Close folder history' });
+    expect(closeButton).toHaveTextContent('×');
+    fireEvent.click(closeButton);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'closeFolderHistory',
+        repositoryId: repository.id,
+      }),
+    );
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'folderHistoryClosed',
+            requestId: 'folder-history-closed',
+            repositoryId: repository.id,
+          },
+        }),
+      );
+    });
+    expect(screen.queryByText('Folder History · src/components')).not.toBeInTheDocument();
+  });
+
+  it('clears a transient folder-history selection when the prior log had no selection', () => {
+    const { newest, commits } = initializeCommitRangeFixture();
+    const repository = {
+      id: 'repo-commit-range',
+      rootUri: 'file:///workspace/commit-range',
+      gitDirUri: 'file:///workspace/commit-range/.git',
+      displayName: 'commit-range',
+      isBare: false,
+      currentBranch: 'main',
+      head: newest,
+    };
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'folderHistoryOpened',
+            requestId: 'folder-history-selection-opened',
+            repository,
+            repositoryId: repository.id,
+            path: 'src',
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'folder-history-selection-opened',
+            repositoryId: repository.id,
+            refs: [],
+            commits,
+            filters: { text: '', branches: [], authors: [], paths: ['src'] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    const newestRow = screen.getByText('newest commit').closest('[role="row"]') as HTMLElement;
+    fireEvent.click(newestRow);
+    expect(newestRow).toHaveAttribute('aria-selected', 'true');
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'folderHistoryClosed',
+            requestId: 'folder-history-selection-closed',
+            repositoryId: repository.id,
+            selectedRepositoryId: repository.id,
+          },
+        }),
+      );
+    });
+
+    expect(newestRow).toHaveAttribute('aria-selected', 'false');
   });
 
   it('renders an empty line-history notice for a purely uncommitted line', () => {

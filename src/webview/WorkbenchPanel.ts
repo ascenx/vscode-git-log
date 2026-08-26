@@ -12,7 +12,7 @@ import {
 } from '../protocol/messages';
 import type { RepositoryRegistry } from '../repositories/RepositoryRegistry';
 import { RepositoryWatchManager } from '../repositories/RepositoryWatchManager';
-import type { EditorHistoryRequest } from '../shared/models';
+import type { EditorHistoryRequest, FolderHistoryRequest } from '../shared/models';
 import { createWebviewHtml } from './createWebviewHtml';
 import { WorkbenchController } from './WorkbenchController';
 
@@ -36,7 +36,10 @@ interface WorkbenchViewSession {
 
 export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode.Disposable {
   private session: WorkbenchViewSession | undefined;
-  private pendingHistoryRequest: EditorHistoryRequest | undefined;
+  private pendingHistoryRequest:
+    | { kind: 'editor'; request: EditorHistoryRequest }
+    | { kind: 'folder'; request: FolderHistoryRequest }
+    | undefined;
 
   constructor(
     private readonly context: vscode.ExtensionContext,
@@ -175,7 +178,13 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
   }
 
   async openEditorHistory(request: EditorHistoryRequest): Promise<void> {
-    this.pendingHistoryRequest = request;
+    this.pendingHistoryRequest = { kind: 'editor', request };
+    await vscode.commands.executeCommand('gitLogWorkbench.log.focus');
+    await this.flushPendingHistory();
+  }
+
+  async openFolderHistory(request: FolderHistoryRequest): Promise<void> {
+    this.pendingHistoryRequest = { kind: 'folder', request };
     await vscode.commands.executeCommand('gitLogWorkbench.log.focus');
     await this.flushPendingHistory();
   }
@@ -198,7 +207,11 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
     const request = this.pendingHistoryRequest;
     if (!session?.ready || !request) return;
     this.pendingHistoryRequest = undefined;
-    await session.controller.openEditorHistory(request);
+    if (request.kind === 'editor') {
+      await session.controller.openEditorHistory(request.request);
+    } else {
+      await session.controller.openFolderHistory(request.request);
+    }
   }
 
   private runSafely(label: string, task: () => void | Promise<void>): void {

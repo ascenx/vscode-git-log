@@ -2,6 +2,16 @@
 
 All notable changes to Git Log are documented in this file.
 
+## Unreleased
+
+### Added
+
+- Added an Explorer `Git Log` submenu. Files can open the existing dedicated File History tab, while folders open the bottom Git Log with a temporary recursive path filter.
+
+### Changed
+
+- Folder History restores the repository's previous filters, selection, and scroll position when returning to the normal log.
+
 ## 0.0.8
 
 ### Added

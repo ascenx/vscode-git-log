@@ -27,10 +27,31 @@ import type {
   ChangedFile,
   CommitSummary,
   EditorHistoryRequest,
+  FolderHistoryRequest,
   HistoryEntry,
   RefLabel,
   RepositorySummary,
 } from '../shared/models';
+
+interface FolderHistorySession {
+  request: FolderHistoryRequest;
+  previousFilters: LogFilters;
+  previousSelectedRepositoryId?: string;
+  previousScrollTop?: number;
+  previousLogOffset?: number;
+  previousGraphContinuation?: GraphContinuationState;
+  previousSelectedHash?: string;
+  previousSelectedHashes?: string[];
+}
+
+function cloneFilters(filters: LogFilters): LogFilters {
+  return {
+    ...filters,
+    branches: [...filters.branches],
+    authors: [...filters.authors],
+    paths: [...filters.paths],
+  };
+}
 
 export interface WorkbenchControllerOptions {
   workspaceRoots: readonly string[];
@@ -112,6 +133,7 @@ export class WorkbenchController {
   private activeHistory:
     | { request: EditorHistoryRequest; entries: HistoryEntry[]; refs: RefLabel[] }
     | undefined;
+  private activeFolderHistory: FolderHistorySession | undefined;
   private workspaceRoots: readonly string[];
   private automaticRequestSequence = 0;
   private repositorySelectionSequence = 0;
@@ -180,9 +202,10 @@ export class WorkbenchController {
           break;
         case 'selectRepository': {
           this.requireRepository(message.repositoryId);
+          const selectionSequence = ++this.repositorySelectionSequence;
+          await this.leaveFolderHistory(message.requestId);
+          if (selectionSequence !== this.repositorySelectionSequence) return;
           const logSequence = ++this.logRequestSequence;
-          this.repositorySelectionSequence += 1;
-          const selectionSequence = this.repositorySelectionSequence;
           this.selectionAbortController?.abort();
           this.logAbortController?.abort();
           this.selectedRepositoryId = message.repositoryId;
@@ -317,6 +340,9 @@ export class WorkbenchController {
               repositoryId: message.repositoryId,
             });
           }
+          break;
+        case 'closeFolderHistory':
+          await this.closeFolderHistory(message.requestId, message.repositoryId);
           break;
         case 'requestStashState': {
           this.requireSelectedRepository(message.repositoryId);
@@ -486,6 +512,144 @@ export class WorkbenchController {
         request.repository.id,
       );
     }
+  }
+
+  async openFolderHistory(request: FolderHistoryRequest): Promise<void> {
+    if (!request.path || request.path.includes('\0')) {
+      throw new Error('Invalid folder history path.');
+    }
+    this.initializationSequence += 1;
+    const transitionSequence = ++this.repositorySelectionSequence;
+    this.logRequestSequence += 1;
+    this.logAbortController?.abort();
+    this.selectionAbortController?.abort();
+    const replacedSession = await this.leaveFolderHistory(
+      `folder-history-replaced-${String(++this.automaticRequestSequence)}`,
+    );
+    if (transitionSequence !== this.repositorySelectionSequence) return;
+    if (
+      replacedSession?.previousSelectedRepositoryId &&
+      this.repositories.has(replacedSession.previousSelectedRepositoryId)
+    ) {
+      this.selectedRepositoryId = replacedSession.previousSelectedRepositoryId;
+    }
+    this.repositories.set(request.repository.id, request.repository);
+    this.options.onRepositoriesChanged?.([...this.repositories.values()]);
+    const previousFilters = cloneFilters(
+      this.filters.get(request.repository.id) ?? EMPTY_LOG_FILTERS,
+    );
+    const previousScrollTop = this.scrollTops.get(request.repository.id);
+    const previousLogOffset = this.logOffsets.get(request.repository.id);
+    const previousGraphContinuation = this.graphContinuations.get(request.repository.id);
+    const previousSelectedHash = this.selectedCommits.get(request.repository.id);
+    const previousSelectedHashes = this.selectedCommitRanges.get(request.repository.id);
+    this.activeFolderHistory = {
+      request,
+      previousFilters,
+      ...(this.selectedRepositoryId
+        ? { previousSelectedRepositoryId: this.selectedRepositoryId }
+        : {}),
+      ...(previousScrollTop !== undefined ? { previousScrollTop } : {}),
+      ...(previousLogOffset !== undefined ? { previousLogOffset } : {}),
+      ...(previousGraphContinuation !== undefined ? { previousGraphContinuation } : {}),
+      ...(previousSelectedHash !== undefined ? { previousSelectedHash } : {}),
+      ...(previousSelectedHashes ? { previousSelectedHashes: [...previousSelectedHashes] } : {}),
+    };
+    if (this.activeHistory) {
+      const historyRepositoryId = this.activeHistory.request.repository.id;
+      this.historyAbortController?.abort();
+      this.activeHistory = undefined;
+      await this.options.postMessage({
+        type: 'historyClosed',
+        requestId: `folder-history-${String(this.automaticRequestSequence)}`,
+        repositoryId: historyRepositoryId,
+      });
+      if (transitionSequence !== this.repositorySelectionSequence) return;
+    }
+    this.selectedRepositoryId = request.repository.id;
+    this.filters.set(request.repository.id, {
+      text: '',
+      branches: [],
+      authors: [],
+      paths: request.path === '.' ? [] : [request.path],
+    });
+    this.scrollTops.set(request.repository.id, 0);
+    this.logOffsets.set(request.repository.id, 0);
+    this.graphContinuations.delete(request.repository.id);
+    const requestId = `folder-history-${String(++this.automaticRequestSequence)}`;
+    await this.options.postMessage({
+      type: 'folderHistoryOpened',
+      requestId,
+      repository: request.repository,
+      repositoryId: request.repository.id,
+      path: request.path,
+    });
+    if (transitionSequence !== this.repositorySelectionSequence) return;
+    const logSequence = ++this.logRequestSequence;
+    await this.loadRepository(request.repository.id, requestId, true, 0, logSequence);
+  }
+
+  private restoreFolderHistoryState(): FolderHistorySession | undefined {
+    const session = this.activeFolderHistory;
+    if (!session) return undefined;
+    this.activeFolderHistory = undefined;
+    const repositoryId = session.request.repository.id;
+    this.filters.set(repositoryId, cloneFilters(session.previousFilters));
+    if (session.previousScrollTop === undefined) this.scrollTops.delete(repositoryId);
+    else this.scrollTops.set(repositoryId, session.previousScrollTop);
+    if (session.previousLogOffset === undefined) this.logOffsets.delete(repositoryId);
+    else this.logOffsets.set(repositoryId, session.previousLogOffset);
+    if (session.previousGraphContinuation === undefined) {
+      this.graphContinuations.delete(repositoryId);
+    } else {
+      this.graphContinuations.set(repositoryId, session.previousGraphContinuation);
+    }
+    if (session.previousSelectedHash === undefined) this.selectedCommits.delete(repositoryId);
+    else this.selectedCommits.set(repositoryId, session.previousSelectedHash);
+    if (session.previousSelectedHashes === undefined) {
+      this.selectedCommitRanges.delete(repositoryId);
+    } else {
+      this.selectedCommitRanges.set(repositoryId, [...session.previousSelectedHashes]);
+    }
+    return session;
+  }
+
+  private async leaveFolderHistory(requestId: string): Promise<FolderHistorySession | undefined> {
+    const session = this.restoreFolderHistoryState();
+    if (!session) return undefined;
+    await this.options.postMessage({
+      type: 'folderHistoryClosed',
+      requestId,
+      repositoryId: session.request.repository.id,
+    });
+    return session;
+  }
+
+  private async closeFolderHistory(requestId: string, repositoryId: string): Promise<void> {
+    if (this.activeFolderHistory?.request.repository.id !== repositoryId) return;
+    const session = this.restoreFolderHistoryState();
+    if (!session) return;
+    const selectedRepositoryId =
+      session.previousSelectedRepositoryId &&
+      this.repositories.has(session.previousSelectedRepositoryId)
+        ? session.previousSelectedRepositoryId
+        : repositoryId;
+    this.selectedRepositoryId = selectedRepositoryId;
+    await this.options.postMessage({
+      type: 'folderHistoryClosed',
+      requestId,
+      repositoryId,
+      selectedRepositoryId,
+    });
+    const logSequence = ++this.logRequestSequence;
+    await this.persistWorkbenchState();
+    await this.loadRepository(
+      selectedRepositoryId,
+      requestId,
+      true,
+      this.logOffsets.get(selectedRepositoryId) ?? 0,
+      logSequence,
+    );
   }
 
   private async postLineHistoryErrorState(
@@ -686,6 +850,10 @@ export class WorkbenchController {
   }
 
   private async initialize(requestId: string): Promise<void> {
+    const folderHistory = this.restoreFolderHistoryState();
+    if (folderHistory?.previousSelectedRepositoryId) {
+      this.selectedRepositoryId = folderHistory.previousSelectedRepositoryId;
+    }
     const initializationSequence = ++this.initializationSequence;
     const workspaceRoots = this.workspaceRoots;
     this.options.gitService.invalidateLogCache?.();
@@ -886,6 +1054,7 @@ export class WorkbenchController {
       commits,
       filters,
       ...(restoredSelectedHash ? { selectedHash: restoredSelectedHash } : {}),
+      ...(restoredSelectedHashes.length ? { selectedHashes: restoredSelectedHashes } : {}),
       ...(replace
         ? {
             scrollTop,
@@ -1187,20 +1356,37 @@ export class WorkbenchController {
     if (!this.options.persistState) return;
     const repositories: PersistedWorkbenchState['repositories'] = {};
     for (const repositoryId of [...this.repositories.keys()].slice(0, 50)) {
-      const selectedHash = this.selectedCommits.get(repositoryId);
-      const scrollTop = this.scrollTops.get(repositoryId);
-      const logOffset = this.logOffsets.get(repositoryId);
-      const graphContinuation = this.graphContinuations.get(repositoryId);
+      const folderHistory =
+        this.activeFolderHistory?.request.repository.id === repositoryId
+          ? this.activeFolderHistory
+          : undefined;
+      const selectedHash = folderHistory
+        ? folderHistory.previousSelectedHash
+        : this.selectedCommits.get(repositoryId);
+      const scrollTop = folderHistory
+        ? folderHistory.previousScrollTop
+        : this.scrollTops.get(repositoryId);
+      const logOffset = folderHistory
+        ? folderHistory.previousLogOffset
+        : this.logOffsets.get(repositoryId);
+      const graphContinuation = folderHistory
+        ? folderHistory.previousGraphContinuation
+        : this.graphContinuations.get(repositoryId);
       repositories[repositoryId] = {
-        filters: this.filters.get(repositoryId) ?? EMPTY_LOG_FILTERS,
+        filters: cloneFilters(
+          folderHistory?.previousFilters ?? this.filters.get(repositoryId) ?? EMPTY_LOG_FILTERS,
+        ),
         ...(selectedHash ? { selectedHash } : {}),
         ...(scrollTop !== undefined ? { scrollTop } : {}),
         ...(logOffset !== undefined ? { logOffset } : {}),
         ...(graphContinuation ? { graphContinuation } : {}),
       };
     }
+    const selectedRepositoryId = this.activeFolderHistory
+      ? this.activeFolderHistory.previousSelectedRepositoryId
+      : this.selectedRepositoryId;
     await this.options.persistState({
-      ...(this.selectedRepositoryId ? { selectedRepositoryId: this.selectedRepositoryId } : {}),
+      ...(selectedRepositoryId ? { selectedRepositoryId } : {}),
       repositories,
     });
   }

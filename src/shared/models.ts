@@ -92,3 +92,8 @@ export interface EditorHistoryRequest {
   endLine?: number;
   workingContent?: string;
 }
+
+export interface FolderHistoryRequest {
+  repository: RepositorySummary;
+  path: string;
+}

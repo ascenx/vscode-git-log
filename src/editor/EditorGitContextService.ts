@@ -33,21 +33,39 @@ export class EditorGitContextService {
   constructor(private readonly runner: GitRunner) {}
 
   async resolve(filePath: string): Promise<EditorGitContext> {
-    const absolutePath = resolve(filePath);
-    const repository = await inspectRepository(dirname(absolutePath), this.runner);
+    return this.resolveResource(filePath, dirname(resolve(filePath)), false);
+  }
+
+  async resolveDirectory(directoryPath: string): Promise<EditorGitContext> {
+    const absolutePath = resolve(directoryPath);
+    return this.resolveResource(absolutePath, absolutePath, true);
+  }
+
+  private async resolveResource(
+    resourcePath: string,
+    repositorySearchPath: string,
+    allowRepositoryRoot: boolean,
+  ): Promise<EditorGitContext> {
+    const absolutePath = resolve(resourcePath);
+    const repository = await inspectRepository(repositorySearchPath, this.runner);
     if (!repository || repository.isBare) {
-      throw new Error('The current file is not inside a Git working tree.');
+      throw new Error('The selected resource is not inside a Git working tree.');
     }
     const repositoryRoot = await realpath(fileURLToPath(repository.rootUri));
-    const canonicalFilePath = await canonicalizePathAllowingMissingLeaf(absolutePath);
-    const relativePath = relative(repositoryRoot, canonicalFilePath);
-    if (!relativePath || relativePath === '..' || relativePath.startsWith(`..${sep}`) || isAbsolute(relativePath)) {
-      throw new Error('The current file is outside the resolved Git working tree.');
+    const canonicalResourcePath = await canonicalizePathAllowingMissingLeaf(absolutePath);
+    const relativePath = relative(repositoryRoot, canonicalResourcePath);
+    if (
+      (!relativePath && !allowRepositoryRoot) ||
+      relativePath === '..' ||
+      relativePath.startsWith(`..${sep}`) ||
+      isAbsolute(relativePath)
+    ) {
+      throw new Error('The selected resource is outside the resolved Git working tree.');
     }
     return {
       repository,
       repositoryRoot,
-      repositoryPath: relativePath.split(sep).join('/'),
+      repositoryPath: relativePath ? relativePath.split(sep).join('/') : '.',
       absolutePath,
     };
   }

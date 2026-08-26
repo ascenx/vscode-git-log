@@ -91,6 +91,7 @@ export type WebviewToExtensionMessage =
       parent?: string;
     }
   | { type: 'closeHistory'; requestId: string; repositoryId: string }
+  | { type: 'closeFolderHistory'; requestId: string; repositoryId: string }
   | { type: 'requestStashState'; requestId: string; repositoryId: string }
   | { type: 'openStashComparison'; requestId: string; repositoryId: string; hash: string }
   | { type: 'refresh'; requestId: string; repositoryId?: string }
@@ -182,6 +183,7 @@ export type ExtensionToWebviewMessage =
       commits: CommitSummary[];
       filters: LogFilters;
       selectedHash?: string;
+      selectedHashes?: string[];
       scrollTop?: number;
       startLogOffset?: number;
       graphContinuation?: GraphContinuationState;
@@ -222,6 +224,19 @@ export type ExtensionToWebviewMessage =
       notice?: string;
     }
   | { type: 'historyClosed'; requestId: string; repositoryId: string; reason?: string }
+  | {
+      type: 'folderHistoryOpened';
+      requestId: string;
+      repository: RepositorySummary;
+      repositoryId: string;
+      path: string;
+    }
+  | {
+      type: 'folderHistoryClosed';
+      requestId: string;
+      repositoryId: string;
+      selectedRepositoryId?: string;
+    }
   | {
       type: 'loading';
       requestId: string;
@@ -614,6 +629,7 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
           }
         : undefined;
     case 'closeHistory':
+    case 'closeFolderHistory':
       return hasRepository(value)
         ? {
             type: value.type,

@@ -150,6 +150,10 @@ describe('extension contributions', () => {
       id: 'gitLogWorkbench.editorContext',
       label: 'Git Log',
     });
+    expect(packageJson.contributes?.submenus).toContainEqual({
+      id: 'gitLogWorkbench.explorerContext',
+      label: 'Git Log',
+    });
     expect(packageJson.contributes?.menus?.['editor/context']).toContainEqual(
       expect.objectContaining({
         submenu: 'gitLogWorkbench.editorContext',
@@ -168,6 +172,29 @@ describe('extension contributions', () => {
       expect.objectContaining({ command: 'gitLogWorkbench.editor.showFileHistory' }),
       expect.objectContaining({ command: 'gitLogWorkbench.editor.compareFileWithRef' }),
     ]);
+    expect(packageJson.contributes?.menus?.['explorer/context']).toContainEqual(
+      expect.objectContaining({
+        submenu: 'gitLogWorkbench.explorerContext',
+        when: 'resourceScheme == file',
+      }),
+    );
+    expect(packageJson.contributes?.menus?.['gitLogWorkbench.explorerContext']).toEqual([
+      expect.objectContaining({
+        command: 'gitLogWorkbench.editor.showFileHistory',
+        when: 'resourceScheme == file && !explorerResourceIsFolder',
+      }),
+      expect.objectContaining({
+        command: 'gitLogWorkbench.explorer.showFolderHistory',
+        when: 'resourceScheme == file && explorerResourceIsFolder',
+      }),
+    ]);
+    expect(packageJson.contributes?.menus?.commandPalette).toContainEqual({
+      command: 'gitLogWorkbench.explorer.showFolderHistory',
+      when: 'false',
+    });
+    expect(packageJson.activationEvents).toContain(
+      'onCommand:gitLogWorkbench.explorer.showFolderHistory',
+    );
   });
 
   it('registers the workbench as a retained bottom-panel webview and focuses it on command', async () => {
@@ -197,6 +224,7 @@ describe('extension contributions', () => {
     expect(source).toContain('nativeDiffOpener');
     expect(source).toContain('openFileHistory: (request) => fileHistoryEditor.open(request)');
     expect(source).toContain('openLineHistory: (request) => lineHistoryEditor.open(request)');
+    expect(source).toContain('openFolderHistory: (request) => workbenchProvider.openFolderHistory(request)');
     expect(source).not.toContain('showLineHistory: () => {},');
     expect(source).not.toContain('showSelectionHistory: () => {},');
     expect(source).not.toContain('showFileHistory: () => {},');
@@ -243,7 +271,8 @@ describe('extension contributions', () => {
     expect(source).toContain(
       'showSelectionHistory: () => editorHistoryCommands.showSelectionHistory(),',
     );
-    expect(source).toContain('showFileHistory: () => editorHistoryCommands.showFileHistory(),');
+    expect(source).toContain('showFileHistory: (resource) =>');
+    expect(source).toContain('showFolderHistory: (resource) =>');
     expect(source).not.toContain('void editorHistoryCommands.showLineHistory()');
   });
 

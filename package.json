@@ -35,6 +35,7 @@
     "onCommand:gitLogWorkbench.editor.showLineHistory",
     "onCommand:gitLogWorkbench.editor.showSelectionHistory",
     "onCommand:gitLogWorkbench.editor.showFileHistory",
+    "onCommand:gitLogWorkbench.explorer.showFolderHistory",
     "onCommand:gitLogWorkbench.editor.compareFileWithRef",
     "onView:gitLogWorkbench.log"
   ],
@@ -62,6 +63,11 @@
         "category": "Git Log"
       },
       {
+        "command": "gitLogWorkbench.explorer.showFolderHistory",
+        "title": "Show Folder History",
+        "category": "Git Log"
+      },
+      {
         "command": "gitLogWorkbench.editor.compareFileWithRef",
         "title": "Compare File with Branch or Tag…",
         "category": "Git Log"
@@ -71,6 +77,10 @@
       {
         "id": "gitLogWorkbench.editorContext",
         "label": "Git Log"
+      },
+      {
+        "id": "gitLogWorkbench.explorerContext",
+        "label": "Git Log"
       }
     ],
     "menus": {
@@ -79,6 +89,31 @@
           "submenu": "gitLogWorkbench.editorContext",
           "when": "resourceScheme == file",
           "group": "navigation@20"
+        }
+      ],
+      "explorer/context": [
+        {
+          "submenu": "gitLogWorkbench.explorerContext",
+          "when": "resourceScheme == file",
+          "group": "navigation@20"
+        }
+      ],
+      "gitLogWorkbench.explorerContext": [
+        {
+          "command": "gitLogWorkbench.editor.showFileHistory",
+          "when": "resourceScheme == file && !explorerResourceIsFolder",
+          "group": "1_history@1"
+        },
+        {
+          "command": "gitLogWorkbench.explorer.showFolderHistory",
+          "when": "resourceScheme == file && explorerResourceIsFolder",
+          "group": "1_history@1"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "gitLogWorkbench.explorer.showFolderHistory",
+          "when": "false"
         }
       ],
       "gitLogWorkbench.editorContext": [

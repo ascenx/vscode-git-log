@@ -22,6 +22,7 @@ describe('buildLogArguments', () => {
         },
       }),
     ).toEqual([
+      '--literal-pathspecs',
       'log',
       '--date-order',
       '--no-color',

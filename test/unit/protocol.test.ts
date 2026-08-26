@@ -194,6 +194,13 @@ describe('parseWebviewMessage', () => {
     ).toMatchObject({ type: 'closeHistory' });
     expect(
       protocol.parseWebviewMessage({
+        type: 'closeFolderHistory',
+        requestId: 'close-folder-history',
+        repositoryId: 'repository-1',
+      }),
+    ).toMatchObject({ type: 'closeFolderHistory' });
+    expect(
+      protocol.parseWebviewMessage({
         type: 'switchHistoryToFile',
         requestId: 'history-file-fallback',
         repositoryId: 'repository-1',

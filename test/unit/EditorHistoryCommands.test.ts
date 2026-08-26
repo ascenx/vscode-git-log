@@ -53,6 +53,81 @@ describe('EditorHistoryCommands', () => {
     expect(showErrorMessage).not.toHaveBeenCalled();
   });
 
+  it('uses an Explorer file resource instead of the active editor', async () => {
+    const { EditorHistoryCommands } = await import('../../src/editor/EditorHistoryCommands');
+    const repository = {
+      id: 'repo-1',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      currentBranch: 'main',
+    };
+    const resolve = vi.fn().mockResolvedValue({
+      repository,
+      repositoryRoot: '/workspace/project',
+      repositoryPath: 'src/explorer.ts',
+      absolutePath: '/workspace/project/src/explorer.ts',
+    });
+    const openFileHistory = vi.fn().mockResolvedValue(undefined);
+    const commands = new EditorHistoryCommands(
+      { resolve } as unknown as EditorGitContextService,
+      new RepositoryRegistry(),
+      {
+        getActiveEditor: () => ({ fsPath: '/workspace/project/src/active.ts' }),
+        openHistory: vi.fn(),
+        openFileHistory,
+        openLineHistory: vi.fn(),
+        showErrorMessage: vi.fn(),
+      },
+    );
+
+    await commands.showFileHistory('/workspace/project/src/explorer.ts');
+
+    expect(resolve).toHaveBeenCalledWith('/workspace/project/src/explorer.ts');
+    expect(openFileHistory).toHaveBeenCalledWith({
+      kind: 'file',
+      repository,
+      path: 'src/explorer.ts',
+    });
+  });
+
+  it('opens an Explorer folder as a folder-history request', async () => {
+    const { EditorHistoryCommands } = await import('../../src/editor/EditorHistoryCommands');
+    const repository = {
+      id: 'repo-1',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      currentBranch: 'main',
+    };
+    const resolveDirectory = vi.fn().mockResolvedValue({
+      repository,
+      repositoryRoot: '/workspace/project',
+      repositoryPath: 'src',
+      absolutePath: '/workspace/project/src',
+    });
+    const openFolderHistory = vi.fn().mockResolvedValue(undefined);
+    const commands = new EditorHistoryCommands(
+      { resolve: vi.fn(), resolveDirectory } as unknown as EditorGitContextService,
+      new RepositoryRegistry(),
+      {
+        getActiveEditor: () => undefined,
+        openHistory: vi.fn(),
+        openFileHistory: vi.fn(),
+        openFolderHistory,
+        openLineHistory: vi.fn(),
+        showErrorMessage: vi.fn(),
+      },
+    );
+
+    await commands.showFolderHistory('/workspace/project/src');
+
+    expect(resolveDirectory).toHaveBeenCalledWith('/workspace/project/src');
+    expect(openFolderHistory).toHaveBeenCalledWith({ repository, path: 'src' });
+  });
+
   it('shows a clear error when there is no active local file', async () => {
     const { EditorHistoryCommands } = await import('../../src/editor/EditorHistoryCommands');
     const openHistory = vi.fn();

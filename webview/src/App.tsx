@@ -114,6 +114,12 @@ interface WorkbenchState {
         notice?: string;
       }
     | undefined;
+  folderHistory:
+    | {
+        repositoryId: string;
+        path: string;
+      }
+    | undefined;
 }
 
 type WorkbenchRequestScope = 'repositories' | 'log' | 'selection' | 'operation';
@@ -163,6 +169,7 @@ const initialState: WorkbenchState = {
   error: undefined,
   errorRecovery: undefined,
   history: undefined,
+  folderHistory: undefined,
 };
 
 function requestId(prefix: string): string {
@@ -840,6 +847,7 @@ export function App() {
             selectedFile: undefined,
             error: undefined,
             errorRecovery: undefined,
+            folderHistory: undefined,
           }));
           break;
         case 'commitMessagesLoaded':
@@ -905,20 +913,23 @@ export function App() {
               repositoryId: message.repositoryId,
               hash: selectedHash,
             };
-            setSelectedCommitHashes((current) => {
-              const selectedIndexes = current.map((hash) =>
-                message.commits.findIndex((commit) => commit.hash === hash),
-              );
-              const keepsSelection =
-                current.length > 1 &&
-                current.includes(selectedHash) &&
-                selectedIndexes.every((index) => index >= 0);
-              if (keepsSelection) {
-                return current;
-              }
+            if (message.selectedHashes) {
               commitSelectionAnchor.current = selectedHash;
-              return [selectedHash];
-            });
+              setSelectedCommitHashes(message.selectedHashes);
+            } else {
+              setSelectedCommitHashes((current) => {
+                const selectedIndexes = current.map((hash) =>
+                  message.commits.findIndex((commit) => commit.hash === hash),
+                );
+                const keepsSelection =
+                  current.length > 1 &&
+                  current.includes(selectedHash) &&
+                  selectedIndexes.every((index) => index >= 0);
+                if (keepsSelection) return current;
+                commitSelectionAnchor.current = selectedHash;
+                return [selectedHash];
+              });
+            }
           }
           setState((current) => {
             if (current.selectedRepositoryId !== message.repositoryId) return current;
@@ -1067,6 +1078,72 @@ export function App() {
                   history: undefined,
                   ...(message.reason
                     ? { error: message.reason, errorRecovery: undefined }
+                    : {}),
+                }
+              : current,
+          );
+          break;
+        case 'folderHistoryOpened':
+          selectedRepositoryIdRef.current = message.repositoryId;
+          historyParentChoices.current.clear();
+          setHistoryParentPicker(undefined);
+          setState((current) => {
+            const repositories = current.repositories.some(
+              (repository) => repository.id === message.repository.id,
+            )
+              ? current.repositories.map((repository) =>
+                  repository.id === message.repository.id ? message.repository : repository,
+                )
+              : [...current.repositories, message.repository];
+            return {
+              ...current,
+              repositories,
+              selectedRepositoryId: message.repositoryId,
+              refs: [],
+              commits: [],
+              commitListRevision: current.commitListRevision + 1,
+              selectedHash: undefined,
+              details: undefined,
+              detailsRepositoryId: undefined,
+              selectedParent: undefined,
+              files: [],
+              selectedFile: undefined,
+              history: undefined,
+              folderHistory: {
+                repositoryId: message.repositoryId,
+                path: message.path,
+              },
+              error: undefined,
+              errorRecovery: undefined,
+            };
+          });
+          break;
+        case 'folderHistoryClosed':
+          if (message.selectedRepositoryId) {
+            selectedRepositoryIdRef.current = message.selectedRepositoryId;
+          }
+          activeSelectionRequest.current = undefined;
+          commitSelectionAnchor.current = undefined;
+          setSelectedCommitHashes([]);
+          setState((current) =>
+            current.folderHistory?.repositoryId === message.repositoryId
+              ? {
+                  ...current,
+                  folderHistory: undefined,
+                  selectedHash: undefined,
+                  details: undefined,
+                  detailsRepositoryId: undefined,
+                  selectedParent: undefined,
+                  files: [],
+                  selectedFile: undefined,
+                  ...(message.selectedRepositoryId &&
+                  message.selectedRepositoryId !== current.selectedRepositoryId
+                    ? {
+                        selectedRepositoryId: message.selectedRepositoryId,
+                        refs: [],
+                        commits: [],
+                        commitListRevision: current.commitListRevision + 1,
+                      }
                     : {}),
                 }
               : current,
@@ -1910,7 +1987,7 @@ export function App() {
 
   const commitToolbar = (
       <header
-        className={`filter-bar${state.history ? ' history-active' : ''}`}
+        className={`filter-bar${state.history || state.folderHistory ? ' history-active' : ''}`}
         role="toolbar"
         aria-label="Git log filters"
       >
@@ -1968,6 +2045,29 @@ export function App() {
               }
             >
               Close
+            </button>
+          </div>
+        ) : null}
+        {state.folderHistory ? (
+          <div className="history-toolbar">
+            <strong>
+              Folder History ·{' '}
+              {state.folderHistory.path === '.' ? 'Repository Root' : state.folderHistory.path}
+            </strong>
+            <button
+              className="history-toolbar-close"
+              type="button"
+              aria-label="Close folder history"
+              title="Restore the previous Git log filters"
+              onClick={() =>
+                send({
+                  type: 'closeFolderHistory',
+                  requestId: requestId('folder-history-back'),
+                  repositoryId: state.folderHistory?.repositoryId ?? '',
+                })
+              }
+            >
+              <span aria-hidden="true">×</span>
             </button>
           </div>
         ) : null}

@@ -86,6 +86,7 @@ export async function run(): Promise<void> {
     'gitLogWorkbench.editor.showLineHistory',
     'gitLogWorkbench.editor.showSelectionHistory',
     'gitLogWorkbench.editor.showFileHistory',
+    'gitLogWorkbench.explorer.showFolderHistory',
     'gitLogWorkbench.editor.compareFileWithRef',
   ]) {
     assert.ok(commands.includes(command), `${command} should be registered`);
@@ -153,6 +154,16 @@ export async function run(): Promise<void> {
           tab.input instanceof vscode.TabInputText && tab.input.uri.fsPath === fixturePath.fsPath,
       ),
       'opening File History should keep the source file tab open',
+    );
+    await vscode.commands.executeCommand(
+      'gitLogWorkbench.explorer.showFolderHistory',
+      vscode.Uri.file(workspaceRoot),
+    );
+    assert.ok(
+      vscode.window.tabGroups.all
+        .flatMap((group) => group.tabs)
+        .every((tab) => !tab.label.startsWith('Folder History:')),
+      'Folder History should use the bottom Git Log view instead of an editor tab',
     );
     editor = await vscode.window.showTextDocument(document);
     await editor.edit((builder) => builder.insert(new vscode.Position(0, 0), 'unsaved line\n'));

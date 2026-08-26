@@ -369,6 +369,7 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     openHistory: (request) => workbenchProvider.openEditorHistory(request),
     openFileHistory: (request) => fileHistoryEditor.open(request),
+    openFolderHistory: (request) => workbenchProvider.openFolderHistory(request),
     openLineHistory: (request) => lineHistoryEditor.open(request),
     showErrorMessage: (message) => {
       void vscode.window.showErrorMessage(message);
@@ -381,7 +382,18 @@ export function activate(context: vscode.ExtensionContext): void {
     },
     showLineHistory: () => editorHistoryCommands.showLineHistory(),
     showSelectionHistory: () => editorHistoryCommands.showSelectionHistory(),
-    showFileHistory: () => editorHistoryCommands.showFileHistory(),
+    showFileHistory: (resource) =>
+      editorHistoryCommands.showFileHistory(
+        resource instanceof vscode.Uri && resource.scheme === 'file'
+          ? resource.fsPath
+          : undefined,
+      ),
+    showFolderHistory: (resource) =>
+      editorHistoryCommands.showFolderHistory(
+        resource instanceof vscode.Uri && resource.scheme === 'file'
+          ? resource.fsPath
+          : undefined,
+      ),
     compareFileWithRef: () => {
       void compareFileCommand.run();
     },

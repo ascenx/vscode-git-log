@@ -5,6 +5,7 @@ const {
   controllerHandleMessage,
   controllerUpdateWorkspaceRoots,
   controllerOpenHistory,
+  controllerOpenFolderHistory,
   executeCommand,
 } = vi.hoisted(() => {
   return {
@@ -12,6 +13,7 @@ const {
     controllerHandleMessage: vi.fn().mockResolvedValue(undefined),
     controllerUpdateWorkspaceRoots: vi.fn().mockResolvedValue(undefined),
     controllerOpenHistory: vi.fn().mockResolvedValue(undefined),
+    controllerOpenFolderHistory: vi.fn().mockResolvedValue(undefined),
     executeCommand: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -61,6 +63,7 @@ vi.mock('../../src/webview/WorkbenchController', () => ({
   WorkbenchController: class WorkbenchController {
     handleMessage = controllerHandleMessage;
     openEditorHistory = controllerOpenHistory;
+    openFolderHistory = controllerOpenFolderHistory;
     dispose = controllerDispose;
     notifyRepositoryChanged = vi.fn();
     updateWorkspaceRoots = controllerUpdateWorkspaceRoots;
@@ -75,13 +78,14 @@ vi.mock('../../src/repositories/RepositoryWatchManager', () => ({
 }));
 
 import { WorkbenchViewProvider } from '../../src/webview/WorkbenchPanel';
-import type { EditorHistoryRequest } from '../../src/shared/models';
+import type { EditorHistoryRequest, FolderHistoryRequest } from '../../src/shared/models';
 
 describe('WorkbenchViewProvider editor history handoff', () => {
   beforeEach(() => {
     controllerDispose.mockClear();
     controllerHandleMessage.mockClear();
     controllerOpenHistory.mockClear();
+    controllerOpenFolderHistory.mockClear();
     controllerUpdateWorkspaceRoots.mockReset().mockResolvedValue(undefined);
     executeCommand.mockClear();
   });
@@ -160,6 +164,13 @@ describe('WorkbenchViewProvider editor history handoff', () => {
     await provider.openEditorHistory(immediate);
     expect(controllerOpenHistory).toHaveBeenCalledTimes(2);
     expect(controllerOpenHistory).toHaveBeenLastCalledWith(immediate);
+
+    const folder: FolderHistoryRequest = {
+      repository,
+      path: 'src',
+    };
+    await provider.openFolderHistory(folder);
+    expect(controllerOpenFolderHistory).toHaveBeenCalledWith(folder);
 
     provider.dispose();
     expect(controllerDispose).toHaveBeenCalledOnce();

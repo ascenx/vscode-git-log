@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { promisify } from 'node:util';
@@ -12,6 +12,7 @@ import {
   GitOperationService,
   type GitOperationRunOptions,
 } from '../../src/git/GitOperationService';
+import { inspectRepository } from '../../src/repositories/discoverRepositories';
 import type { LogQuery } from '../../src/git/GitService';
 import type { CommitSummary, RepositorySummary } from '../../src/shared/models';
 import type {
@@ -47,6 +48,386 @@ async function createRepository(): Promise<string> {
 }
 
 describe('WorkbenchController', () => {
+  it('keeps a newly opened folder history when repository initialization finishes later', async () => {
+    const repository = await createRepository();
+    await mkdir(join(repository, 'src'));
+    await writeFile(join(repository, 'src', 'feature.txt'), 'feature\n');
+    await execFileAsync('git', ['add', 'src/feature.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'folder feature'], {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Alice',
+        GIT_AUTHOR_EMAIL: 'alice@example.com',
+        GIT_COMMITTER_NAME: 'Alice',
+        GIT_COMMITTER_EMAIL: 'alice@example.com',
+      },
+    });
+    const runner = new GitRunner();
+    const repositorySummary = await inspectRepository(repository, runner);
+    expect(repositorySummary).toBeDefined();
+    if (!repositorySummary) return;
+    let releaseDiscovery: (() => void) | undefined;
+    let markDiscoveryStarted: (() => void) | undefined;
+    const discoveryStarted = new Promise<void>((resolve) => {
+      markDiscoveryStarted = resolve;
+    });
+    const discoveryGate = new Promise<void>((resolve) => {
+      releaseDiscovery = resolve;
+    });
+    let delayed = false;
+    const delayedRunner = {
+      run: vi.fn(async (args: readonly string[], options: Parameters<GitRunner['run']>[1]) => {
+        if (!delayed && args[0] === 'rev-parse' && args[1] === '--absolute-git-dir') {
+          delayed = true;
+          markDiscoveryStarted?.();
+          await discoveryGate;
+        }
+        return runner.run(args, options);
+      }),
+    } as unknown as GitRunner;
+    const messages: ExtensionToWebviewMessage[] = [];
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: delayedRunner,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+
+    const initialization = controller.handleMessage({
+      type: 'ready',
+      requestId: 'delayed-folder-initialize',
+    });
+    await discoveryStarted;
+    await controller.openFolderHistory({ repository: repositorySummary, path: 'src' });
+    const folderOpenedIndex = messages.findIndex(
+      (message) => message.type === 'folderHistoryOpened',
+    );
+    expect(folderOpenedIndex).toBeGreaterThanOrEqual(0);
+    releaseDiscovery?.();
+    await initialization;
+
+    expect(
+      messages.slice(folderOpenedIndex + 1).some((message) => message.type === 'initialize'),
+    ).toBe(false);
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      filters: { text: '', branches: [], authors: [], paths: ['src'] },
+    });
+  });
+
+  it('opens folder history with a transient path filter and restores previous filters', async () => {
+    const repository = await createRepository();
+    await mkdir(join(repository, 'src'));
+    await writeFile(join(repository, 'src', 'feature.txt'), 'feature\n');
+    await execFileAsync('git', ['add', 'src/feature.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'folder feature'], {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Alice',
+        GIT_AUTHOR_EMAIL: 'alice@example.com',
+        GIT_COMMITTER_NAME: 'Alice',
+        GIT_COMMITTER_EMAIL: 'alice@example.com',
+      },
+    });
+    const messages: ExtensionToWebviewMessage[] = [];
+    let persistedState: PersistedWorkbenchState | undefined;
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+      persistState(state: PersistedWorkbenchState) {
+        persistedState = state;
+        return Promise.resolve();
+      },
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-folder-history' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize') return;
+    const targetRepository = initialized.repositories[0];
+    expect(targetRepository).toBeDefined();
+    if (!targetRepository) return;
+    await controller.handleMessage({
+      type: 'updateFilters',
+      requestId: 'folder-history-previous-filter',
+      repositoryId: targetRepository.id,
+      filters: { text: 'first', branches: [], authors: [], paths: [] },
+    });
+
+    messages.length = 0;
+    await controller.openFolderHistory({ repository: targetRepository, path: 'src' });
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: 'folderHistoryOpened',
+        repositoryId: targetRepository.id,
+        path: 'src',
+      }),
+    );
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      type: 'repositoryData',
+      repositoryId: targetRepository.id,
+      filters: { text: '', branches: [], authors: [], paths: ['src'] },
+      commits: [expect.objectContaining({ subject: 'folder feature' })],
+    });
+    expect(persistedState?.repositories[targetRepository.id]?.filters).toEqual({
+      text: 'first',
+      branches: [],
+      authors: [],
+      paths: [],
+    });
+    const folderData = messages.filter((message) => message.type === 'repositoryData').at(-1);
+    expect(folderData?.type).toBe('repositoryData');
+    if (!folderData || folderData.type !== 'repositoryData' || !folderData.commits[0]) return;
+    await controller.handleMessage({
+      type: 'selectCommit',
+      requestId: 'select-folder-history-commit',
+      repositoryId: targetRepository.id,
+      hash: folderData.commits[0].hash,
+    });
+    expect(persistedState?.repositories[targetRepository.id]?.selectedHash).toBeUndefined();
+
+    messages.length = 0;
+    await controller.handleMessage({
+      type: 'closeFolderHistory',
+      requestId: 'close-folder-history',
+      repositoryId: targetRepository.id,
+    });
+
+    expect(messages).toContainEqual(
+      expect.objectContaining({
+        type: 'folderHistoryClosed',
+        requestId: 'close-folder-history',
+        repositoryId: targetRepository.id,
+      }),
+    );
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      type: 'repositoryData',
+      requestId: 'close-folder-history',
+      filters: { text: 'first', branches: [], authors: [], paths: [] },
+    });
+
+    await controller.openFolderHistory({ repository: targetRepository, path: 'src' });
+    messages.length = 0;
+    await controller.updateWorkspaceRoots([repository]);
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      type: 'repositoryData',
+      filters: { text: 'first', branches: [], authors: [], paths: [] },
+    });
+  });
+
+  it('returns to the previously selected repository after cross-repository folder history', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'git-log-folder-history-repositories-'));
+    temporaryDirectories.push(workspace);
+    const firstRoot = join(workspace, 'first');
+    const secondRoot = join(workspace, 'second');
+    for (const root of [firstRoot, secondRoot]) {
+      await execFileAsync('git', ['init', '-b', 'main', root]);
+      await mkdir(join(root, 'src'));
+      await writeFile(join(root, 'src', 'app.txt'), `${root}\n`);
+      await execFileAsync('git', ['add', 'src/app.txt'], { cwd: root });
+      await execFileAsync('git', ['commit', '-m', `commit ${root}`], {
+        cwd: root,
+        env: {
+          ...process.env,
+          GIT_AUTHOR_NAME: 'Alice',
+          GIT_AUTHOR_EMAIL: 'alice@example.com',
+          GIT_COMMITTER_NAME: 'Alice',
+          GIT_COMMITTER_EMAIL: 'alice@example.com',
+        },
+      });
+    }
+    const messages: ExtensionToWebviewMessage[] = [];
+    let delayFolderClose = false;
+    let markFolderCloseStarted: (() => void) | undefined;
+    let releaseFolderClose: (() => void) | undefined;
+    const folderCloseStarted = new Promise<void>((resolve) => {
+      markFolderCloseStarted = resolve;
+    });
+    const folderCloseGate = new Promise<void>((resolve) => {
+      releaseFolderClose = resolve;
+    });
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [workspace],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      scanDepth: 1,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        if (delayFolderClose && message.type === 'folderHistoryClosed') {
+          markFolderCloseStarted?.();
+          return folderCloseGate.then(() => true);
+        }
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-cross-folder-history' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (!initialized || initialized.type !== 'initialize') return;
+    const first = initialized.repositories.find((repository) => repository.displayName === 'first');
+    const second = initialized.repositories.find((repository) => repository.displayName === 'second');
+    expect(first).toBeDefined();
+    expect(second).toBeDefined();
+    if (!first || !second) return;
+    expect(initialized.selectedRepositoryId).toBe(first.id);
+
+    await controller.openFolderHistory({ repository: second, path: 'src' });
+    messages.length = 0;
+    await controller.handleMessage({
+      type: 'closeFolderHistory',
+      requestId: 'close-cross-folder-history',
+      repositoryId: second.id,
+    });
+
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      type: 'repositoryData',
+      requestId: 'close-cross-folder-history',
+      repositoryId: first.id,
+    });
+
+    await controller.openFolderHistory({ repository: first, path: 'src' });
+    delayFolderClose = true;
+    const replaceFolderHistory = controller.openFolderHistory({ repository: second, path: 'src' });
+    await folderCloseStarted;
+    const marker = messages.length;
+    await controller.handleMessage({
+      type: 'selectRepository',
+      requestId: 'select-during-folder-replacement',
+      repositoryId: first.id,
+    });
+    releaseFolderClose?.();
+    await replaceFolderHistory;
+
+    expect(
+      messages
+        .slice(marker)
+        .some(
+          (message) =>
+            message.type === 'folderHistoryOpened' && message.repositoryId === second.id,
+        ),
+    ).toBe(false);
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      requestId: 'select-during-folder-replacement',
+      repositoryId: first.id,
+    });
+  });
+
+  it('restores the complete commit selection after leaving folder history', async () => {
+    const repository = await createRepository();
+    await mkdir(join(repository, 'src'));
+    await writeFile(join(repository, 'src', 'feature.txt'), 'feature\n');
+    await execFileAsync('git', ['add', 'src/feature.txt'], { cwd: repository });
+    await execFileAsync('git', ['commit', '-m', 'folder feature'], {
+      cwd: repository,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: 'Alice',
+        GIT_AUTHOR_EMAIL: 'alice@example.com',
+        GIT_COMMITTER_NAME: 'Alice',
+        GIT_COMMITTER_EMAIL: 'alice@example.com',
+      },
+    });
+    const messages: ExtensionToWebviewMessage[] = [];
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: new GitService(runner),
+      gitRunner: runner,
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-folder-selection' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    const normalData = messages.find((message) => message.type === 'repositoryData');
+    expect(initialized?.type).toBe('initialize');
+    expect(normalData?.type).toBe('repositoryData');
+    if (
+      !initialized ||
+      initialized.type !== 'initialize' ||
+      !normalData ||
+      normalData.type !== 'repositoryData' ||
+      normalData.commits.length < 2
+    ) {
+      return;
+    }
+    const targetRepository = initialized.repositories[0];
+    const selectedHashes = normalData.commits.slice(0, 2).map((commit) => commit.hash);
+    expect(targetRepository).toBeDefined();
+    if (!targetRepository || !selectedHashes[0]) return;
+    await controller.handleMessage({
+      type: 'selectCommit',
+      requestId: 'select-before-folder-history',
+      repositoryId: targetRepository.id,
+      hash: selectedHashes[0],
+      hashes: selectedHashes,
+    });
+    await controller.openFolderHistory({ repository: targetRepository, path: 'src' });
+    await controller.handleMessage({
+      type: 'closeFolderHistory',
+      requestId: 'close-folder-selection',
+      repositoryId: targetRepository.id,
+    });
+
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      requestId: 'close-folder-selection',
+      selectedHash: selectedHashes[0],
+      selectedHashes,
+    });
+  });
+
+
   it('loads the changed files from every selected commit', async () => {
     const repository = await createRepository();
     const commitEnvironment = {

@@ -21,6 +21,7 @@ function escapeExtendedRegexp(value: string): string {
 
 export function buildLogArguments(options: BuildLogArgumentsOptions): string[] {
   const args = [
+    ...(options.filters.paths.length ? ['--literal-pathspecs'] : []),
     'log',
     '--date-order',
     '--no-color',
