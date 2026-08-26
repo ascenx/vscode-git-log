@@ -2,6 +2,18 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.0.8
+
+### Added
+
+- Added an `All Changes` action to commit comparisons that opens every non-binary file in a single VS Code multi-file diff while retaining per-file diff selection.
+- Added a persisted Commit Details placement control for switching between the full-width bottom area and the bottom of Changed Files.
+
+### Fixed
+
+- Cleared the `All Changes` active state after its multi-file diff is closed.
+- Kept Commit Details visible below Changed Files when no file preview is selected and when the persisted placement is restored at narrow panel widths.
+
 ## 0.0.7
 
 ### Added
