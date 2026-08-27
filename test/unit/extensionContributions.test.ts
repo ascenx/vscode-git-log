@@ -264,6 +264,26 @@ describe('extension contributions', () => {
     expect(source).toContain('lineBlameService.invalidate()');
   });
 
+  it('contributes configurable current-line history context', async () => {
+    const packageJson = JSON.parse(await readFile('package.json', 'utf8')) as {
+      contributes?: {
+        configuration?: { properties?: Record<string, unknown> };
+      };
+    };
+    const source = await readFile('src/extension.ts', 'utf8');
+
+    expect(packageJson.contributes?.configuration?.properties).toMatchObject({
+      'gitLogWorkbench.lineHistory.contextLines': {
+        type: 'number',
+        default: 3,
+        minimum: 0,
+        maximum: 20,
+      },
+    });
+    expect(source).toContain('getContextLines: () =>');
+    expect(source).toContain(".get<number>('lineHistory.contextLines', 3)");
+  });
+
   it('returns editor-history command promises so VS Code waits for their tabs to open', async () => {
     const source = await readFile('src/extension.ts', 'utf8');
 

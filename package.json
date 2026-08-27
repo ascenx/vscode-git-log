@@ -170,6 +170,13 @@
           "default": true,
           "description": "Show author, relative time, and commit information after the active editor line. Uncommitted edit times are tracked from document changes and retained in workspace state. Automatically suppressed while VS Code's built-in Git blame editor decoration is enabled."
         },
+        "gitLogWorkbench.lineHistory.contextLines": {
+          "type": "number",
+          "default": 3,
+          "minimum": 0,
+          "maximum": 20,
+          "description": "Number of unchanged lines shown above and below changes in current-line history. The tracked Git history remains limited to the current line."
+        },
         "gitLogWorkbench.repositories.scanDepth": {
           "type": "number",
           "default": 2,

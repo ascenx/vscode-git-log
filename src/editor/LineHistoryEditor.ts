@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import type { FileHistoryService } from '../git/FileHistoryService';
 import type { GitService } from '../git/GitService';
+import { extractLineHistoryContextPatch } from '../git/lineHistoryContext';
 import type { LineHistoryEntry } from '../git/parsers/parseLineHistory';
 import type { EditorHistoryRequest, HistoryEntry, RefLabel } from '../shared/models';
 import { createFileHistoryHtml } from './createFileHistoryHtml';
@@ -15,11 +16,18 @@ import type {
 
 const WEBVIEW_LINE_PATCH_MAX_BYTES = 8 * 1024 * 1024;
 const WEBVIEW_LINE_PATCH_MAX_LINES = 50_000;
+const DEFAULT_CONTEXT_LINES = 3;
+const MAX_CONTEXT_LINES = 20;
+
+interface LineHistoryEditorOptions extends HistoryDiffSupport {
+  getContextLines?(): number;
+}
 
 interface LineHistorySession {
   panel: vscode.WebviewPanel;
   request: EditorHistoryRequest & { kind: 'line' };
   entries: LineHistoryEntry[];
+  contextLines: number;
   diffRequestId: number;
   diffAbortController?: AbortController;
   nativeDiffAbortController?: AbortController;
@@ -70,6 +78,11 @@ function canRenderLinePatch(patch: string): boolean {
   return true;
 }
 
+function normalizeContextLines(value: number): number {
+  if (!Number.isSafeInteger(value)) return DEFAULT_CONTEXT_LINES;
+  return Math.min(MAX_CONTEXT_LINES, Math.max(0, value));
+}
+
 export class LineHistoryEditor implements vscode.Disposable {
   private session: LineHistorySession | undefined;
   private abortController: AbortController | undefined;
@@ -80,10 +93,10 @@ export class LineHistoryEditor implements vscode.Disposable {
   constructor(
     private readonly fileHistoryService: FileHistoryService,
     private readonly gitService: GitService,
-    support: HistoryDiffSupport = {},
+    private readonly options: LineHistoryEditorOptions = {},
   ) {
-    this.syntaxHighlighter = support.syntaxHighlighter;
-    this.nativeDiffOpener = support.nativeDiffOpener;
+    this.syntaxHighlighter = options.syntaxHighlighter;
+    this.nativeDiffOpener = options.nativeDiffOpener;
   }
 
   async open(request: EditorHistoryRequest & { kind: 'line' }): Promise<void> {
@@ -92,6 +105,9 @@ export class LineHistoryEditor implements vscode.Disposable {
     if (startLine === undefined || endLine === undefined) {
       throw new Error('Line history requires a valid line range.');
     }
+    const contextLines = request.lineScope === 'selection'
+      ? 0
+      : normalizeContextLines(this.options.getContextLines?.() ?? DEFAULT_CONTEXT_LINES);
 
     const requestId = ++this.openRequestId;
     this.abortController?.abort();
@@ -166,7 +182,7 @@ export class LineHistoryEditor implements vscode.Disposable {
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true },
     );
-    const session: LineHistorySession = { panel, request, entries, diffRequestId: 0 };
+    const session: LineHistorySession = { panel, request, entries, contextLines, diffRequestId: 0 };
     this.session = session;
     const messageSubscription = panel.webview.onDidReceiveMessage(async (message: unknown) => {
       if (this.session !== session || !isLineHistoryMessage(message)) return;
@@ -218,9 +234,7 @@ export class LineHistoryEditor implements vscode.Disposable {
       path: request.path,
       entries: entries.map(withoutLinePatch),
       hasMore: false,
-      ...(request.lineScope === 'selection'
-        ? { contentOnly: true }
-        : { changesOnly: true }),
+      contentOnly: true,
       emptyMessage,
       ...(entries.length > 0 && notice ? { notice } : {}),
     });
@@ -249,7 +263,29 @@ export class LineHistoryEditor implements vscode.Disposable {
       : entry.newStartLine ?? entry.oldStartLine ?? session.request.startLine;
     try {
       await session.panel.webview.postMessage({ type: 'fileHistoryDiffLoading', hash: entry.hash });
-      if (!canRenderLinePatch(entry.linePatch)) {
+      let patch = entry.linePatch;
+      if (session.contextLines > 0 && !entry.binary) {
+        try {
+          const contextualPatch = await this.gitService.getFilePatch(
+            fileURLToPath(session.request.repository.rootUri),
+            entry.hash,
+            entry.parents[0],
+            entry.path,
+            entry.oldPath,
+            abortController.signal,
+            session.contextLines,
+          );
+          patch = extractLineHistoryContextPatch(
+            contextualPatch,
+            entry,
+            session.contextLines,
+          ) ?? entry.linePatch;
+        } catch (error) {
+          if (abortController.signal.aborted) return;
+          void error;
+        }
+      }
+      if (!canRenderLinePatch(patch)) {
         if (this.session !== session || requestId !== session.diffRequestId) return;
         await session.panel.webview.postMessage({
           type: 'fileHistoryError',
@@ -263,7 +299,7 @@ export class LineHistoryEditor implements vscode.Disposable {
         try {
           highlightedLines = await this.syntaxHighlighter.highlightPatch(
             entry.path,
-            entry.linePatch,
+            patch,
             abortController.signal,
           );
         } catch (error) {
@@ -278,8 +314,16 @@ export class LineHistoryEditor implements vscode.Disposable {
         hash: entry.hash,
         subject: entry.subject,
         subtitle: line === undefined ? entry.path : `${entry.path} · line ${String(line)}`,
-        patch: entry.linePatch,
+        patch,
         binary: entry.binary,
+        ...(session.contextLines > 0 ? {
+          lineHistoryTarget: {
+            oldStartLine: entry.oldStartLine,
+            oldLineCount: entry.oldLineCount,
+            newStartLine: entry.newStartLine,
+            newLineCount: entry.newLineCount,
+          },
+        } : {}),
         ...(highlightedLines ? { highlightedLines } : {}),
       });
     } finally {

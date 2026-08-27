@@ -11,6 +11,7 @@ All notable changes to Git Log are documented in this file.
 ### Changed
 
 - Folder History restores the repository's previous filters, selection, and scroll position when returning to the normal log.
+- Current-line history now shows configurable, visually subdued context lines around each tracked change without broadening the Git history range beyond the selected line.
 
 ## 0.0.8
 

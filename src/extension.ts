@@ -305,6 +305,10 @@ export function activate(context: vscode.ExtensionContext): void {
   const lineHistoryEditor = new LineHistoryEditor(fileHistoryService, gitService, {
     syntaxHighlighter,
     nativeDiffOpener,
+    getContextLines: () =>
+      vscode.workspace
+        .getConfiguration('gitLogWorkbench')
+        .get<number>('lineHistory.contextLines', 3),
   });
   const compareFileCommand = new EditorFileComparisonCommand(
     editorContexts,

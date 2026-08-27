@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitRunner } from '../../src/git/GitRunner';
 import { GitService } from '../../src/git/GitService';
+import { extractLineHistoryContextPatch } from '../../src/git/lineHistoryContext';
 import { EMPTY_LOG_FILTERS } from '../../src/git/logQuery';
 
 const execFileAsync = promisify(execFile);
@@ -198,6 +199,23 @@ describe('GitService', () => {
       | [readonly string[], { maxStdoutBytes?: number }]
       | undefined;
     expect(noIndexCall?.[1].maxStdoutBytes).toBe(8 * 1024 * 1024);
+  });
+
+  it('loads a file patch with bounded context for current-line history', async () => {
+    const run = vi.fn().mockResolvedValue({ stdout: Buffer.alloc(0), stderr: Buffer.alloc(0) });
+    const { GitService } = await import('../../src/git/GitService');
+
+    await new GitService({ run } as never).getFilePatch(
+      '/repo',
+      'a'.repeat(40),
+      'b'.repeat(40),
+      'app.ts',
+      undefined,
+      undefined,
+      3,
+    );
+
+    expect(run.mock.calls[0]?.[0]).toContain('--unified=3');
   });
 
   it('rejects a full-context file-history patch with too many rendered lines', async () => {
@@ -791,6 +809,45 @@ describe('GitService', () => {
     expect(patch).toContain(' line 1');
     expect(patch).toContain(' line 14');
     expect(patch).toContain('+changed line 8');
+  });
+
+  it('loads and extracts real Git context around a tracked line', async () => {
+    const repository = await mkdtemp(join(tmpdir(), 'git-log-workbench-line-context-'));
+    temporaryDirectories.push(repository);
+    await git(repository, 'init', '-b', 'main');
+    const lines = Array.from({ length: 14 }, (_, index) => `line ${String(index + 1)}`);
+    await writeFile(join(repository, 'app.txt'), `${lines.join('\n')}\n`);
+    await git(repository, 'add', 'app.txt');
+    await git(repository, 'commit', '-m', 'add app');
+    const parent = await git(repository, 'rev-parse', 'HEAD');
+    lines[7] = 'changed line 8';
+    await writeFile(join(repository, 'app.txt'), `${lines.join('\n')}\n`);
+    await git(repository, 'add', 'app.txt');
+    await git(repository, 'commit', '-m', 'change line 8');
+    const revision = await git(repository, 'rev-parse', 'HEAD');
+
+    const patch = await new GitService(new GitRunner()).getFilePatch(
+      repository,
+      revision,
+      parent,
+      'app.txt',
+      undefined,
+      undefined,
+      3,
+    );
+    const extracted = extractLineHistoryContextPatch(patch, {
+      oldStartLine: 8,
+      oldLineCount: 1,
+      newStartLine: 8,
+      newLineCount: 1,
+    }, 3);
+
+    expect(extracted).toContain(' line 5');
+    expect(extracted).toContain('-line 8');
+    expect(extracted).toContain('+changed line 8');
+    expect(extracted).toContain(' line 11');
+    expect(extracted).not.toContain('\n line 4\n');
+    expect(extracted).not.toContain('\n line 12\n');
   });
 
   it('loads an inline patch between a revision and the working file', async () => {

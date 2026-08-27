@@ -119,9 +119,12 @@ export function createFileHistoryHtml(options: {
     .diff-body { min-height: 0; overflow: auto; overscroll-behavior: contain; font-family: var(--vscode-editor-font-family); font-size: var(--vscode-editor-font-size); line-height: 1.45; }
     .diff-body:focus-visible { outline: 1px solid var(--vscode-focusBorder); outline-offset: -1px; }
     .diff-status { padding: 24px; color: var(--vscode-descriptionForeground); font-family: var(--vscode-font-family); text-align: center; }
+    .diff-surface { display: grid; width: max-content; min-width: 100%; }
     .diff-row { display: grid; grid-template-columns: 58px 58px minmax(max-content, 1fr); min-height: 21px; white-space: pre; }
     .diff-row.add { background: var(--vscode-diffEditor-insertedLineBackground, rgba(46, 160, 67, 0.18)); }
     .diff-row.delete { background: var(--vscode-diffEditor-removedLineBackground, rgba(248, 81, 73, 0.18)); }
+    .diff-row.context { color: var(--vscode-descriptionForeground); }
+    .diff-row.context .syntax-token { color: inherit; }
     .diff-row.hunk { color: var(--vscode-editorInfo-foreground); background: var(--vscode-diffEditor-unchangedRegionBackground, rgba(64, 128, 255, 0.09)); }
     .diff-row.meta { color: var(--vscode-descriptionForeground); }
     .diff-line-number { padding: 1px 8px 1px 4px; color: var(--vscode-editorLineNumber-foreground); border-right: 1px solid var(--vscode-panel-border); text-align: right; user-select: none; }
@@ -295,7 +298,11 @@ export function createFileHistoryHtml(options: {
       }
       return cell;
     }
-    function renderPatch(patch, highlightedLines) {
+    function containsLine(line, start, count) {
+      return Number.isSafeInteger(line) && Number.isSafeInteger(start) && Number.isSafeInteger(count) &&
+        count > 0 && line >= start && line < start + count;
+    }
+    function renderPatch(patch, highlightedLines, lineHistoryTarget) {
       if (!patch) { setStatus('This commit changed file metadata without line-level text changes.'); return; }
       const fragment = document.createDocumentFragment();
       let oldLine;
@@ -331,6 +338,16 @@ export function createFileHistoryHtml(options: {
           oldLine = (oldLine ?? 0) + 1;
           newLine = (newLine ?? 0) + 1;
         }
+        if (lineHistoryTarget && kind === 'add' && !containsLine(
+          newValue,
+          lineHistoryTarget.newStartLine,
+          lineHistoryTarget.newLineCount,
+        )) kind = 'context';
+        if (lineHistoryTarget && kind === 'delete' && !containsLine(
+          oldValue,
+          lineHistoryTarget.oldStartLine,
+          lineHistoryTarget.oldLineCount,
+        )) kind = 'context';
         if (changesOnly && kind !== 'add' && kind !== 'delete') continue;
         if (contentOnly) {
           const noNewlineMarker = inHunk && kind === 'meta' && line.endsWith('No newline at end of file');
@@ -341,7 +358,10 @@ export function createFileHistoryHtml(options: {
         row.append(lineCell(oldValue), lineCell(newValue), codeCell(line, highlightedLines?.[lineIndex]));
         fragment.append(row);
       }
-      diffBody.replaceChildren(fragment);
+      const surface = document.createElement('div');
+      surface.className = 'diff-surface';
+      surface.append(fragment);
+      diffBody.replaceChildren(surface);
       updateChangeTargets();
       requestAnimationFrame(() => navigateToChange(0, false));
     }
@@ -453,7 +473,7 @@ export function createFileHistoryHtml(options: {
       if (message.type === 'fileHistoryDiffLoaded' && message.hash === selectedHash) {
         diffTitle.textContent = message.subject || 'Inline Diff';
         diffSubtitle.textContent = message.subtitle || '';
-        if (message.binary) setStatus('Binary files cannot be rendered as an inline text diff.'); else renderPatch(message.patch, message.highlightedLines);
+        if (message.binary) setStatus('Binary files cannot be rendered as an inline text diff.'); else renderPatch(message.patch, message.highlightedLines, message.lineHistoryTarget);
       }
       if (message.type === 'fileHistoryError' && (message.hash === undefined || message.hash === selectedHash)) {
         setStatus(message.message || 'Unable to load file history.');

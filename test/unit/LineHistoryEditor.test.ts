@@ -55,6 +55,39 @@ describe('LineHistoryEditor', () => {
 
     const hash = 'a'.repeat(40);
     const linePatch = '@@ -8 +8 @@\n-old target\n+new target\n';
+    const contextualPatch = [
+      '@@ -5,7 +5,7 @@',
+      ' before 5',
+      ' before 6',
+      ' before 7',
+      '-old target',
+      '+new target',
+      ' after 9',
+      ' after 10',
+      ' after 11',
+    ].join('\n');
+    const getLineHistory = vi.fn().mockResolvedValue({
+      entries: [{
+        hash,
+        parents: ['b'.repeat(40)],
+        subject: 'update target',
+        authorName: 'Alice',
+        authorEmail: 'alice@example.com',
+        authorTime: 1,
+        commitTime: 2,
+        refs: [],
+        path: 'src/app.ts',
+        additions: 1,
+        deletions: 1,
+        binary: false,
+        oldStartLine: 8,
+        oldLineCount: 1,
+        newStartLine: 0,
+        newLineCount: 0,
+        linePatch,
+      }],
+      truncated: false,
+    });
     const fileHistoryService = {
       resolveHeadLineRange: vi.fn().mockResolvedValue({
         status: 'mapped',
@@ -62,30 +95,13 @@ describe('LineHistoryEditor', () => {
         endLine: 8,
         partiallyUncommitted: false,
       }),
-      getLineHistory: vi.fn().mockResolvedValue({
-        entries: [{
-          hash,
-          parents: ['b'.repeat(40)],
-          subject: 'update target',
-          authorName: 'Alice',
-          authorEmail: 'alice@example.com',
-          authorTime: 1,
-          commitTime: 2,
-          refs: [],
-          path: 'src/app.ts',
-          additions: 1,
-          deletions: 1,
-          binary: false,
-          oldStartLine: 8,
-          oldLineCount: 1,
-          newStartLine: 0,
-          newLineCount: 0,
-          linePatch,
-        }],
-        truncated: false,
-      }),
+      getLineHistory,
     } as unknown as FileHistoryService;
-    const gitService = { getRefs: vi.fn().mockResolvedValue([]) } as unknown as GitService;
+    const getFilePatch = vi.fn().mockResolvedValue(contextualPatch);
+    const gitService = {
+      getRefs: vi.fn().mockResolvedValue([]),
+      getFilePatch,
+    } as unknown as GitService;
     const highlightPatch = vi.fn().mockResolvedValue([
       undefined,
       [{ content: '-old target', light: '#111111', dark: '#eeeeee' }],
@@ -94,6 +110,7 @@ describe('LineHistoryEditor', () => {
     const editor = new editorModule.LineHistoryEditor(fileHistoryService, gitService, {
       syntaxHighlighter: { highlightPatch },
       nativeDiffOpener: { open: openNativeDiff },
+      getContextLines: () => 5,
     });
 
     await editor.open({
@@ -113,16 +130,42 @@ describe('LineHistoryEditor', () => {
     expect(panel.webview.html).toContain('class="file-history-shell"');
     expect(panel.webview.html).toContain('data-history-hash="' + hash + '"');
     expect(panel.webview.html).not.toContain('-old target');
+    expect(panel.webview.html).toContain('const contentOnly = true');
+    expect(panel.webview.html).toContain('const changesOnly = false');
+    expect(getLineHistory).toHaveBeenCalledWith(
+      '/repo',
+      'src/app.ts',
+      8,
+      8,
+      [],
+      expect.any(AbortSignal),
+    );
 
     await receiveMessage({ type: 'fileHistoryReady' });
+
+    expect(getFilePatch).toHaveBeenCalledWith(
+      '/repo',
+      hash,
+      'b'.repeat(40),
+      'src/app.ts',
+      undefined,
+      expect.any(AbortSignal),
+      5,
+    );
 
     expect(panel.webview.postMessage).toHaveBeenCalledWith({
       type: 'fileHistoryDiffLoaded',
       hash,
       subject: 'update target',
       subtitle: 'src/app.ts · line 8',
-      patch: linePatch,
+      patch: contextualPatch,
       binary: false,
+      lineHistoryTarget: {
+        oldStartLine: 8,
+        oldLineCount: 1,
+        newStartLine: 0,
+        newLineCount: 0,
+      },
       highlightedLines: [
         undefined,
         [{ content: '-old target', light: '#111111', dark: '#eeeeee' }],

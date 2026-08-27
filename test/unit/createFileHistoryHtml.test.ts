@@ -120,7 +120,9 @@ describe('createFileHistoryHtml', () => {
 
     expect(html).toContain('overflow-x: auto; overflow-y: hidden;');
     expect(html).toContain('.history-list { min-height: 0; overflow: auto; overscroll-behavior: contain; }');
-    expect(html).toContain('.diff-body { min-height: 0; overflow: auto; overscroll-behavior: contain;');
+    expect(html).toContain(
+      'min-height: 0; overflow: auto; overscroll-behavior: contain; font-family: var(--vscode-editor-font-family);',
+    );
     expect(html).toContain('class="diff-body" role="region" aria-label="File diff content" tabindex="0"');
     expect(html).toContain('class="diff-nav-button diff-previous-change"');
     expect(html).toContain('aria-label="Previous change"');
@@ -131,6 +133,30 @@ describe('createFileHistoryHtml', () => {
     expect(html).toContain('diffBody.scrollTo');
     expect(html).toContain("previousChange.addEventListener('click'");
     expect(html).toContain("nextChange.addEventListener('click'");
+  });
+
+  it('wraps diff rows in an intrinsic-width surface for complete row backgrounds', () => {
+    const { dom } = mountFileHistory({ contentOnly: true });
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'fileHistoryDiffLoaded',
+        hash: entry.hash,
+        subject: entry.subject,
+        subtitle: entry.path,
+        binary: false,
+        patch: '@@ -1 +1 @@\n-old\n+const longLine = repositories && anotherCondition;',
+      },
+    }));
+
+    const surface = dom.window.document.querySelector('.diff-surface');
+    expect(surface).not.toBeNull();
+    expect(surface?.querySelectorAll('.diff-row')).toHaveLength(2);
+    expect(dom.window.document.querySelector('style')?.textContent).toContain(
+      '.diff-surface { display: grid; width: max-content; min-width: 100%; }',
+    );
+
+    dom.window.close();
   });
 
   it('opens the selected commit in the native VS Code diff', () => {
@@ -341,8 +367,41 @@ describe('createFileHistoryHtml', () => {
     expect(code).toContain(' line 35');
     expect(code).toContain('-old selected');
     expect(code).toContain('+new selected');
+    expect(dom.window.document.querySelectorAll('.diff-row.context')).not.toHaveLength(0);
     expect(dom.window.document.querySelectorAll('.diff-row.hunk')).toHaveLength(0);
     expect(dom.window.document.querySelectorAll('.diff-row.meta')).toHaveLength(0);
+    expect(dom.window.document.querySelector('style')?.textContent).toContain(
+      '.diff-row.context { color: var(--vscode-descriptionForeground); }',
+    );
+
+    dom.window.close();
+  });
+
+  it('dims added-file context outside the tracked current line', () => {
+    const { dom } = mountFileHistory({ contentOnly: true });
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'fileHistoryDiffLoaded',
+        hash: entry.hash,
+        subject: entry.subject,
+        subtitle: entry.path,
+        binary: false,
+        patch: '@@ -0,0 +1,5 @@\n+line 1\n+line 2\n+target\n+line 4\n+line 5',
+        lineHistoryTarget: {
+          oldStartLine: 0,
+          oldLineCount: 0,
+          newStartLine: 3,
+          newLineCount: 1,
+        },
+      },
+    }));
+
+    expect(dom.window.document.querySelectorAll('.diff-row.add')).toHaveLength(1);
+    expect(dom.window.document.querySelector('.diff-row.add .diff-code')?.textContent).toBe(
+      '+target',
+    );
+    expect(dom.window.document.querySelectorAll('.diff-row.context')).toHaveLength(4);
 
     dom.window.close();
   });

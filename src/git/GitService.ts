@@ -407,11 +407,15 @@ export class GitService {
     path: string,
     oldPath?: string,
     signal?: AbortSignal,
+    contextLines = FULL_FILE_DIFF_CONTEXT_LINES,
   ): Promise<string> {
     if (!COMMIT_HASH_PATTERN.test(hash)) throw new Error(`Invalid commit hash: ${hash}`);
     if (parent && !COMMIT_HASH_PATTERN.test(parent)) throw new Error(`Invalid parent hash: ${parent}`);
     validateRepositoryPath(path);
     if (oldPath !== undefined) validateRepositoryPath(oldPath);
+    if (!Number.isSafeInteger(contextLines) || contextLines < 0) {
+      throw new Error('Invalid file patch context.');
+    }
     const paths = oldPath && oldPath !== path ? [oldPath, path] : [path];
     const args = parent
       ? [
@@ -420,7 +424,7 @@ export class GitService {
           '--no-color',
           '--no-ext-diff',
           '--no-textconv',
-          `--unified=${String(FULL_FILE_DIFF_CONTEXT_LINES)}`,
+          `--unified=${String(contextLines)}`,
           '-M',
           parent,
           hash,
@@ -434,7 +438,7 @@ export class GitService {
           '--no-color',
           '--no-ext-diff',
           '--no-textconv',
-          `--unified=${String(FULL_FILE_DIFF_CONTEXT_LINES)}`,
+          `--unified=${String(contextLines)}`,
           '-M',
           hash,
           '--',
