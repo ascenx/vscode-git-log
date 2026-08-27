@@ -63,4 +63,30 @@ describe('line history context', () => {
     expect(extracted).not.toContain('+line 1');
     expect(extracted).not.toContain('+line 7');
   });
+
+  it('counts only unchanged rows toward the configured context', async () => {
+    const { extractLineHistoryContextPatch } = await import('../../src/git/lineHistoryContext');
+    const patch = [
+      '@@ -5,8 +5,8 @@',
+      ' line 5',
+      ' line 6',
+      ' line 7',
+      '-old adjacent',
+      '+new adjacent',
+      '-old target',
+      '+new target',
+      ' line 10',
+      ' line 11',
+      ' line 12',
+    ].join('\n');
+
+    const extracted = extractLineHistoryContextPatch(patch, {
+      oldStartLine: 9,
+      oldLineCount: 1,
+      newStartLine: 9,
+      newLineCount: 1,
+    }, 3);
+
+    expect(extracted).toBe(patch);
+  });
 });

@@ -405,4 +405,44 @@ describe('createFileHistoryHtml', () => {
 
     dom.window.close();
   });
+
+  it('limits weakened changes to the configured logical-line context', () => {
+    const { dom } = mountFileHistory({
+      contentOnly: true,
+      lineHistoryContextLines: 3,
+    });
+    const deletions = Array.from({ length: 9 }, (_, index) => `-old ${String(index + 99)}`);
+    const additions = Array.from({ length: 9 }, (_, index) => `+new ${String(index + 102)}`);
+
+    dom.window.dispatchEvent(new dom.window.MessageEvent('message', {
+      data: {
+        type: 'fileHistoryDiffLoaded',
+        hash: entry.hash,
+        subject: entry.subject,
+        subtitle: entry.path,
+        binary: false,
+        patch: ['@@ -99,9 +102,9 @@', ...deletions, ...additions].join('\n'),
+        lineHistoryTarget: {
+          oldStartLine: 103,
+          oldLineCount: 1,
+          newStartLine: 106,
+          newLineCount: 1,
+        },
+      },
+    }));
+
+    const contextRows = [...dom.window.document.querySelectorAll('.diff-row.context')];
+    expect(contextRows.length).toBe(6);
+    expect([...contextRows[0]!.querySelectorAll('.diff-line-number')]
+      .map((node) => node.textContent)).toEqual(['100', '103']);
+    expect(contextRows[0]?.querySelector('.diff-code')?.textContent).toBe(' new 103');
+    expect([...contextRows.at(-1)!.querySelectorAll('.diff-line-number')]
+      .map((node) => node.textContent)).toEqual(['106', '109']);
+    expect(contextRows.at(-1)?.querySelector('.diff-code')?.textContent).toBe(' new 109');
+    expect(dom.window.document.querySelectorAll('.diff-row.delete')).toHaveLength(1);
+    expect(dom.window.document.querySelectorAll('.diff-row.add')).toHaveLength(1);
+    expect(dom.window.document.querySelectorAll('.diff-row')).toHaveLength(8);
+
+    dom.window.close();
+  });
 });

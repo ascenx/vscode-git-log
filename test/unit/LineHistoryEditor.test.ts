@@ -182,6 +182,211 @@ describe('LineHistoryEditor', () => {
     );
   });
 
+  it('renders only the tracked change when current-line context is zero', async () => {
+    const { LineHistoryEditor } = await import('../../src/editor/LineHistoryEditor');
+    const hash = '0'.repeat(40);
+    const linePatch = '@@ -7,3 +7,3 @@\n before\n-old target\n+new target\n after';
+    const getFilePatch = vi.fn();
+    const editor = new LineHistoryEditor(
+      {
+        resolveHeadLineRange: vi.fn().mockResolvedValue({
+          status: 'mapped',
+          startLine: 8,
+          endLine: 8,
+          partiallyUncommitted: false,
+        }),
+        getLineHistory: vi.fn().mockResolvedValue({
+          entries: [{
+            hash,
+            parents: ['1'.repeat(40)],
+            subject: 'update target',
+            authorName: 'Alice',
+            authorEmail: 'alice@example.com',
+            authorTime: 1,
+            commitTime: 2,
+            refs: [],
+            path: 'src/app.ts',
+            additions: 1,
+            deletions: 1,
+            binary: false,
+            oldStartLine: 8,
+            oldLineCount: 1,
+            newStartLine: 8,
+            newLineCount: 1,
+            linePatch,
+          }],
+          truncated: false,
+        }),
+      } as unknown as FileHistoryService,
+      {
+        getRefs: vi.fn().mockResolvedValue([]),
+        getFilePatch,
+      } as unknown as GitService,
+      { getContextLines: () => 0 },
+    );
+
+    await editor.open({
+      kind: 'line',
+      repository,
+      path: 'src/app.ts',
+      startLine: 8,
+      endLine: 8,
+    });
+
+    expect(panel.webview.html).toContain('const changesOnly = true');
+    expect(panel.webview.html).toContain('const contentOnly = false');
+
+    await receiveMessage({ type: 'fileHistoryReady' });
+
+    expect(getFilePatch).not.toHaveBeenCalled();
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'fileHistoryDiffLoaded',
+      hash,
+      patch: linePatch,
+      lineHistoryTarget: {
+        oldStartLine: 8,
+        oldLineCount: 1,
+        newStartLine: 8,
+        newLineCount: 1,
+      },
+    }));
+  });
+
+  it('narrows an expanded Git line range to the matching logical line', async () => {
+    const { LineHistoryEditor } = await import('../../src/editor/LineHistoryEditor');
+    const hash = '8'.repeat(40);
+    const linePatch = [
+      '@@ -99,9 +106,1 @@',
+      '-                        bottom: 0.r,',
+      '-                        left: 0.r,',
+      '-                        right: 0.r,',
+      '-                        child: Image.asset(',
+      "-                          'assets/img/referrals_v3/bg_home_02.webp',",
+      '-                          fit: BoxFit.fill,',
+      '-                          width: 513.r,',
+      '-                          height: 142.r,',
+      '-                        )),',
+      "+                        'assets/img/referrals_v3/bg_home_02.webp',",
+    ].join('\n');
+    const editor = new LineHistoryEditor(
+      {
+        resolveHeadLineRange: vi.fn().mockResolvedValue({
+          status: 'mapped',
+          startLine: 108,
+          endLine: 108,
+          partiallyUncommitted: false,
+        }),
+        getLineHistory: vi.fn().mockResolvedValue({
+          entries: [{
+            hash,
+            parents: ['7'.repeat(40)],
+            subject: 'format files',
+            authorName: 'Alice',
+            authorEmail: 'alice@example.com',
+            authorTime: 1,
+            commitTime: 2,
+            refs: [],
+            path: 'src/app.ts',
+            additions: 1,
+            deletions: 9,
+            binary: false,
+            oldStartLine: 99,
+            oldLineCount: 9,
+            newStartLine: 106,
+            newLineCount: 1,
+            linePatch,
+          }],
+          truncated: false,
+        }),
+      } as unknown as FileHistoryService,
+      { getRefs: vi.fn().mockResolvedValue([]) } as unknown as GitService,
+      { getContextLines: () => 0 },
+    );
+
+    await editor.open({
+      kind: 'line',
+      repository,
+      path: 'src/app.ts',
+      startLine: 108,
+      endLine: 108,
+    });
+    await receiveMessage({ type: 'fileHistoryReady' });
+
+    expect(panel.webview.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+      type: 'fileHistoryDiffLoaded',
+      hash,
+      lineHistoryTarget: {
+        oldStartLine: 103,
+        oldLineCount: 1,
+        newStartLine: 106,
+        newLineCount: 1,
+      },
+    }));
+  });
+
+  it('omits commits that only changed another line in an expanded Git range', async () => {
+    const { LineHistoryEditor } = await import('../../src/editor/LineHistoryEditor');
+    const changedHash = '4'.repeat(40);
+    const unrelatedHash = '5'.repeat(40);
+    const baseEntry = {
+      parents: ['6'.repeat(40)],
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 1,
+      commitTime: 2,
+      refs: [],
+      path: 'src/app.ts',
+      additions: 1,
+      deletions: 1,
+      binary: false,
+    };
+    const editor = new LineHistoryEditor(
+      {
+        resolveHeadLineRange: vi.fn().mockResolvedValue({
+          status: 'mapped',
+          startLine: 10,
+          endLine: 10,
+          partiallyUncommitted: false,
+        }),
+        getLineHistory: vi.fn().mockResolvedValue({
+          entries: [{
+            ...baseEntry,
+            hash: changedHash,
+            subject: 'change target',
+            oldStartLine: 10,
+            oldLineCount: 1,
+            newStartLine: 10,
+            newLineCount: 1,
+            linePatch: '@@ -10 +10 @@\n-old target\n+new target',
+          }, {
+            ...baseEntry,
+            hash: unrelatedHash,
+            subject: 'change sibling',
+            oldStartLine: 9,
+            oldLineCount: 3,
+            newStartLine: 9,
+            newLineCount: 3,
+            linePatch: '@@ -9,3 +9,3 @@\n old target\n-old sibling\n+new sibling\n third',
+          }],
+          truncated: false,
+        }),
+      } as unknown as FileHistoryService,
+      { getRefs: vi.fn().mockResolvedValue([]) } as unknown as GitService,
+      { getContextLines: () => 3 },
+    );
+
+    await editor.open({
+      kind: 'line',
+      repository,
+      path: 'src/app.ts',
+      startLine: 10,
+      endLine: 10,
+    });
+
+    expect(panel.webview.html).toContain(`data-history-hash="${changedHash}"`);
+    expect(panel.webview.html).not.toContain(`data-history-hash="${unrelatedHash}"`);
+  });
+
   it.each([
     ['byte limit', 'x'.repeat(8 * 1024 * 1024 + 1)],
     ['line limit', '+x\n'.repeat(50_001)],

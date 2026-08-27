@@ -4,7 +4,11 @@ import { fileURLToPath } from 'node:url';
 import * as vscode from 'vscode';
 import type { FileHistoryService } from '../git/FileHistoryService';
 import type { GitService } from '../git/GitService';
-import { extractLineHistoryContextPatch } from '../git/lineHistoryContext';
+import {
+  extractLineHistoryContextPatch,
+  traceCurrentLineHistoryTarget,
+  type LineHistoryPatchTarget,
+} from '../git/lineHistoryContext';
 import type { LineHistoryEntry } from '../git/parsers/parseLineHistory';
 import type { EditorHistoryRequest, HistoryEntry, RefLabel } from '../shared/models';
 import { createFileHistoryHtml } from './createFileHistoryHtml';
@@ -27,6 +31,7 @@ interface LineHistorySession {
   panel: vscode.WebviewPanel;
   request: EditorHistoryRequest & { kind: 'line' };
   entries: LineHistoryEntry[];
+  lineTargets: ReadonlyMap<string, LineHistoryPatchTarget>;
   contextLines: number;
   diffRequestId: number;
   diffAbortController?: AbortController;
@@ -182,7 +187,27 @@ export class LineHistoryEditor implements vscode.Disposable {
       vscode.ViewColumn.One,
       { enableScripts: true, retainContextWhenHidden: true },
     );
-    const session: LineHistorySession = { panel, request, entries, contextLines, diffRequestId: 0 };
+    const lineTargets = new Map<string, LineHistoryPatchTarget>();
+    if (request.lineScope !== 'selection') {
+      let currentLine: string | undefined;
+      const changedEntries: LineHistoryEntry[] = [];
+      for (const entry of entries) {
+        const traced = traceCurrentLineHistoryTarget(entry.linePatch, entry, currentLine);
+        currentLine = traced.previousLine ?? currentLine;
+        if (!traced.changed) continue;
+        lineTargets.set(entry.hash, traced.target);
+        changedEntries.push(entry);
+      }
+      entries = changedEntries;
+    }
+    const session: LineHistorySession = {
+      panel,
+      request,
+      entries,
+      lineTargets,
+      contextLines,
+      diffRequestId: 0,
+    };
     this.session = session;
     const messageSubscription = panel.webview.onDidReceiveMessage(async (message: unknown) => {
       if (this.session !== session || !isLineHistoryMessage(message)) return;
@@ -234,7 +259,10 @@ export class LineHistoryEditor implements vscode.Disposable {
       path: request.path,
       entries: entries.map(withoutLinePatch),
       hasMore: false,
-      contentOnly: true,
+      ...(request.lineScope === 'selection' || contextLines > 0
+        ? { contentOnly: true }
+        : { changesOnly: true }),
+      ...(request.lineScope !== 'selection' ? { lineHistoryContextLines: contextLines } : {}),
       emptyMessage,
       ...(entries.length > 0 && notice ? { notice } : {}),
     });
@@ -258,9 +286,10 @@ export class LineHistoryEditor implements vscode.Disposable {
     const abortController = new AbortController();
     session.diffAbortController = abortController;
     const requestId = ++session.diffRequestId;
-    const line = entry.newLineCount === 0
-      ? entry.oldStartLine
-      : entry.newStartLine ?? entry.oldStartLine ?? session.request.startLine;
+    const lineTarget = session.lineTargets.get(entry.hash);
+    const line = lineTarget?.newLineCount === 0
+      ? lineTarget.oldStartLine
+      : lineTarget?.newStartLine ?? entry.newStartLine ?? entry.oldStartLine ?? session.request.startLine;
     try {
       await session.panel.webview.postMessage({ type: 'fileHistoryDiffLoading', hash: entry.hash });
       let patch = entry.linePatch;
@@ -277,7 +306,7 @@ export class LineHistoryEditor implements vscode.Disposable {
           );
           patch = extractLineHistoryContextPatch(
             contextualPatch,
-            entry,
+            lineTarget ?? entry,
             session.contextLines,
           ) ?? entry.linePatch;
         } catch (error) {
@@ -316,13 +345,8 @@ export class LineHistoryEditor implements vscode.Disposable {
         subtitle: line === undefined ? entry.path : `${entry.path} · line ${String(line)}`,
         patch,
         binary: entry.binary,
-        ...(session.contextLines > 0 ? {
-          lineHistoryTarget: {
-            oldStartLine: entry.oldStartLine,
-            oldLineCount: entry.oldLineCount,
-            newStartLine: entry.newStartLine,
-            newLineCount: entry.newLineCount,
-          },
+        ...(lineTarget ? {
+          lineHistoryTarget: lineTarget,
         } : {}),
         ...(highlightedLines ? { highlightedLines } : {}),
       });

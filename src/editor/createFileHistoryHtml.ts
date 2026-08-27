@@ -59,6 +59,7 @@ export function createFileHistoryHtml(options: {
   hasMore: boolean;
   changesOnly?: boolean;
   contentOnly?: boolean;
+  lineHistoryContextLines?: number;
   emptyMessage?: string;
   notice?: string;
 }): string {
@@ -166,6 +167,9 @@ export function createFileHistoryHtml(options: {
     const state = ${initialState};
     const changesOnly = ${options.changesOnly === true ? 'true' : 'false'};
     const contentOnly = ${options.contentOnly === true ? 'true' : 'false'};
+    const lineHistoryContextLines = ${Number.isSafeInteger(options.lineHistoryContextLines) && (options.lineHistoryContextLines ?? -1) >= 0
+      ? String(options.lineHistoryContextLines)
+      : 'undefined'};
     const shell = document.querySelector('.file-history-shell');
     const historyPane = document.querySelector('.history-pane');
     const resizer = document.querySelector('.history-resizer');
@@ -302,6 +306,54 @@ export function createFileHistoryHtml(options: {
       return Number.isSafeInteger(line) && Number.isSafeInteger(start) && Number.isSafeInteger(count) &&
         count > 0 && line >= start && line < start + count;
     }
+    function withinLineContext(line, start, count) {
+      return Number.isSafeInteger(lineHistoryContextLines) && Number.isSafeInteger(line) &&
+        Number.isSafeInteger(start) && Number.isSafeInteger(count) && count > 0 &&
+        line >= start - lineHistoryContextLines && line < start + count + lineHistoryContextLines;
+    }
+    function pairedContextCode(row) {
+      const value = row?.querySelector('.diff-code')?.textContent ?? '';
+      return value.startsWith('+') || value.startsWith('-') ? ' ' + value.slice(1) : value;
+    }
+    function pairLineHistoryContext(fragment, target) {
+      if (!target || !contentOnly || !Number.isSafeInteger(lineHistoryContextLines)) return fragment;
+      const rows = [...fragment.querySelectorAll('.diff-row')];
+      const oldRows = new Map();
+      const newRows = new Map();
+      for (const row of rows) {
+        const oldValue = Number(row.dataset.oldLine);
+        const newValue = Number(row.dataset.newLine);
+        if (Number.isSafeInteger(oldValue)) oldRows.set(oldValue, row);
+        if (Number.isSafeInteger(newValue)) newRows.set(newValue, row);
+      }
+      const paired = document.createDocumentFragment();
+      for (let offset = -lineHistoryContextLines; offset <= lineHistoryContextLines; offset += 1) {
+        const oldValue = target.oldLineCount > 0 ? target.oldStartLine + offset : undefined;
+        const newValue = target.newLineCount > 0 ? target.newStartLine + offset : undefined;
+        const oldRow = oldValue > 0 ? oldRows.get(oldValue) : undefined;
+        const newRow = newValue > 0 ? newRows.get(newValue) : undefined;
+        if (offset === 0) {
+          const targetRows = rows.filter((row) =>
+            (row.classList.contains('delete') && row === oldRow) ||
+            (row.classList.contains('add') && row === newRow));
+          if (targetRows.length) {
+            paired.append(...targetRows);
+            continue;
+          }
+        }
+        const source = newRow ?? oldRow;
+        if (!source) continue;
+        const row = document.createElement('div');
+        row.className = 'diff-row context';
+        row.append(
+          lineCell(oldRow ? oldValue : undefined),
+          lineCell(newRow ? newValue : undefined),
+          codeCell(pairedContextCode(source)),
+        );
+        paired.append(row);
+      }
+      return paired;
+    }
     function renderPatch(patch, highlightedLines, lineHistoryTarget) {
       if (!patch) { setStatus('This commit changed file metadata without line-level text changes.'); return; }
       const fragment = document.createDocumentFragment();
@@ -348,6 +400,9 @@ export function createFileHistoryHtml(options: {
           lineHistoryTarget.oldStartLine,
           lineHistoryTarget.oldLineCount,
         )) kind = 'context';
+        if (lineHistoryTarget && kind === 'context' && Number.isSafeInteger(lineHistoryContextLines) &&
+          !withinLineContext(oldValue, lineHistoryTarget.oldStartLine, lineHistoryTarget.oldLineCount) &&
+          !withinLineContext(newValue, lineHistoryTarget.newStartLine, lineHistoryTarget.newLineCount)) continue;
         if (changesOnly && kind !== 'add' && kind !== 'delete') continue;
         if (contentOnly) {
           const noNewlineMarker = inHunk && kind === 'meta' && line.endsWith('No newline at end of file');
@@ -355,12 +410,14 @@ export function createFileHistoryHtml(options: {
         }
         const row = document.createElement('div');
         row.className = 'diff-row ' + kind;
+        if (oldValue !== undefined) row.dataset.oldLine = String(oldValue);
+        if (newValue !== undefined) row.dataset.newLine = String(newValue);
         row.append(lineCell(oldValue), lineCell(newValue), codeCell(line, highlightedLines?.[lineIndex]));
         fragment.append(row);
       }
       const surface = document.createElement('div');
       surface.className = 'diff-surface';
-      surface.append(fragment);
+      surface.append(pairLineHistoryContext(fragment, lineHistoryTarget));
       diffBody.replaceChildren(surface);
       updateChangeTargets();
       requestAnimationFrame(() => navigateToChange(0, false));
