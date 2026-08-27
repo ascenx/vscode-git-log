@@ -2,7 +2,7 @@
 
 All notable changes to Git Log are documented in this file.
 
-## Unreleased
+## 0.0.9
 
 ### Added
 
@@ -11,7 +11,12 @@ All notable changes to Git Log are documented in this file.
 ### Changed
 
 - Folder History restores the repository's previous filters, selection, and scroll position when returning to the normal log.
-- Current-line history now shows configurable, visually subdued context lines around each tracked change without broadening the Git history range beyond the selected line.
+- Current-line history now shows configurable, visually subdued logical context lines around each tracked change without broadening the requested Git history range beyond the selected line.
+
+### Fixed
+
+- Suppressed the extension's current-line blame annotation while VS Code's built-in `git.blame.editorDecoration.enabled` decoration is active, preventing duplicate blame text.
+- Refined current-line history across formatting and large replacement commits by tracking the matching logical line, pairing old and new context, honoring zero-context mode, and filtering commits that only changed another line in Git's expanded `-L` range.
 
 ## 0.0.8
 
