@@ -264,7 +264,7 @@ describe('parseWebviewMessage', () => {
         scrollTop: 8400,
         logOffset: 5000,
         graphContinuation: {
-          lanes: [{ id: 1, target: 'abcdef1', colorIndex: 2 }],
+          lanes: [{ id: 1, target: 'abcdef1', colorIndex: 2, collapsed: true }],
           nextLaneId: 3,
           nextColorIndex: 4,
         },
@@ -274,9 +274,23 @@ describe('parseWebviewMessage', () => {
       scrollTop: 8400,
       logOffset: 5000,
       graphContinuation: {
-        lanes: [{ id: 1, target: 'abcdef1', colorIndex: 2 }],
+        lanes: [{ id: 1, target: 'abcdef1', colorIndex: 2, collapsed: true }],
       },
     });
+    expect(
+      protocol.parseWebviewMessage({
+        type: 'updateScrollAnchor',
+        requestId: 'scroll-invalid-collapsed-lane',
+        repositoryId: 'repository-1',
+        scrollTop: 8400,
+        logOffset: 5000,
+        graphContinuation: {
+          lanes: [{ id: 1, target: 'abcdef1', colorIndex: 2, collapsed: 'yes' }],
+          nextLaneId: 3,
+          nextColorIndex: 4,
+        },
+      }),
+    ).toBeUndefined();
     expect(
       protocol.parseWebviewMessage({
         type: 'updateScrollAnchor',

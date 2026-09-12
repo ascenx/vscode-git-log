@@ -450,6 +450,7 @@ function isGraphContinuation(value: unknown): value is GraphContinuationState {
       !isCounter(lane.id) ||
       !isCounter(lane.colorIndex) ||
       !isHash(lane.target) ||
+      (lane.collapsed !== undefined && typeof lane.collapsed !== 'boolean') ||
       ids.has(lane.id)
     ) {
       return false;

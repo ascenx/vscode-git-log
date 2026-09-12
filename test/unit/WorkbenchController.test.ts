@@ -1974,6 +1974,116 @@ describe('WorkbenchController', () => {
     expect(appended.commits).toHaveLength(3);
   });
 
+  it('counts structural graph context separately from filtered log pagination', async () => {
+    const repository = await createRepository();
+    const runner = new GitRunner();
+    const summary = (hash: string, subject: string, filterMatch?: false): CommitSummary => ({
+      hash: hash.repeat(40),
+      parents: [],
+      subject,
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 1,
+      commitTime: 1,
+      refs: [],
+      ...(filterMatch === false ? { filterMatch } : {}),
+    });
+    const getLog = vi.fn().mockResolvedValue([
+      summary('a', 'needle one'),
+      summary('b', 'merge context', false),
+      summary('c', 'needle two'),
+    ]);
+    const messages: ExtensionToWebviewMessage[] = [];
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: { getRefs: vi.fn().mockResolvedValue([]), getLog } as unknown as GitService,
+      gitRunner: runner,
+      scanDepth: 0,
+      initialPageSize: 2,
+      pageSize: 2,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-graph-context' });
+
+    const data = messages.find((message) => message.type === 'repositoryData');
+    expect(data).toMatchObject({
+      type: 'repositoryData',
+      commits: [
+        expect.objectContaining({ subject: 'needle one' }),
+        expect.objectContaining({ subject: 'merge context', filterMatch: false }),
+        expect.objectContaining({ subject: 'needle two' }),
+      ],
+      hasMore: true,
+    });
+    expect(getLog).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not infer more matches when structural rows fill the budget after history ends', async () => {
+    const repository = await createRepository();
+    const summary = (hash: string, filterMatch?: false): CommitSummary => ({
+      hash: hash.repeat(40),
+      parents: [],
+      subject: hash,
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 1,
+      commitTime: 1,
+      refs: [],
+      ...(filterMatch === false ? { filterMatch } : {}),
+    });
+    const getLog = vi.fn().mockResolvedValue([
+      summary('a'),
+      summary('b', false),
+      summary('c'),
+    ]);
+    const messages: ExtensionToWebviewMessage[] = [];
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository],
+      gitService: { getRefs: vi.fn().mockResolvedValue([]), getLog } as unknown as GitService,
+      gitRunner: new GitRunner(),
+      scanDepth: 0,
+      initialPageSize: 3,
+      pageSize: 3,
+      maxCachedCommits: 3,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage(message: ExtensionToWebviewMessage) {
+        messages.push(message);
+        return Promise.resolve(true);
+      },
+      persistLayout: () => Promise.resolve(),
+    });
+
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-render-budget' });
+
+    expect(getLog).toHaveBeenCalledTimes(1);
+    expect(getLog.mock.calls[0]?.[1]).toMatchObject({ limit: 3, skip: 0, maxGraphRows: 3 });
+    expect(messages.find((message) => message.type === 'repositoryData')).toMatchObject({
+      type: 'repositoryData',
+      commits: expect.arrayContaining([
+        expect.objectContaining({ hash: 'a'.repeat(40) }),
+        expect.objectContaining({ hash: 'b'.repeat(40), filterMatch: false }),
+        expect.objectContaining({ hash: 'c'.repeat(40) }),
+      ]),
+      hasMore: false,
+    });
+  });
+
   it('opens a file-list comparison for the selected commit and parent', async () => {
     const repository = await createRepository();
     await writeFile(join(repository, 'app.txt'), 'hello\nsecond\n');

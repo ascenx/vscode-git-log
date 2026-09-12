@@ -4,6 +4,8 @@ export interface GraphLane {
   id: number;
   target: string;
   colorIndex: number;
+  /** The route reaches its target through commits omitted from the visible list. */
+  collapsed?: boolean;
 }
 
 export interface GraphContinuationState {
@@ -19,6 +21,8 @@ export interface GraphConnection {
   toLane: number;
   colorIndex: number;
   kind: GraphConnectionKind;
+  /** The connection represents ancestry through one or more hidden commits. */
+  collapsed?: boolean;
 }
 
 export interface GraphRow {
@@ -41,7 +45,7 @@ function cloneLanes(lanes: readonly GraphLane[]): GraphLane[] {
 }
 
 export function layoutCommitGraph(
-  commits: readonly Pick<CommitSummary, 'hash' | 'parents'>[],
+  commits: readonly Pick<CommitSummary, 'hash' | 'parents' | 'graphParents'>[],
   continuation?: GraphContinuationState,
 ): GraphLayoutResult {
   const active = cloneLanes(continuation?.lanes ?? []);
@@ -50,13 +54,15 @@ export function layoutCommitGraph(
   let maxLaneCount = active.length;
   const rows: GraphRow[] = [];
 
-  const createLane = (target: string): GraphLane => ({
+  const createLane = (target: string, collapsed = false): GraphLane => ({
     id: nextLaneId++,
     target,
     colorIndex: nextColorIndex++,
+    ...(collapsed ? { collapsed: true } : {}),
   });
 
   for (const commit of commits) {
+    const parents = commit.graphParents ?? commit.parents;
     const existingMatches = active
       .map((lane, index) => ({ lane, index }))
       .filter(({ lane }) => lane.target === commit.hash);
@@ -78,6 +84,8 @@ export function layoutCommitGraph(
 
     const nodeColor = node.colorIndex;
     const connections: GraphConnection[] = [];
+    const parentIsCollapsed = (parent: string): boolean =>
+      commit.graphParents !== undefined && !commit.parents.includes(parent);
 
     for (let index = lanesBefore.length - 1; index >= 0; index -= 1) {
       const lane = lanesBefore[index];
@@ -87,33 +95,42 @@ export function layoutCommitGraph(
       }
     }
 
-    const parentAssignments: { parent: string; laneId: number }[] = [];
-    const firstParent = commit.parents[0];
+    const parentAssignments: { parent: string; laneId: number; collapsed: boolean }[] = [];
+    const firstParent = parents[0];
     if (!firstParent) {
       const currentIndex = active.findIndex((lane) => lane.id === node.id);
       if (currentIndex !== -1) active.splice(currentIndex, 1);
     } else {
+      const collapsed = parentIsCollapsed(firstParent);
       const existingParentLane = active.find(
-        (lane) => lane.id !== node.id && lane.target === firstParent,
+        (lane) =>
+          lane.id !== node.id &&
+          lane.target === firstParent &&
+          Boolean(lane.collapsed) === collapsed,
       );
       if (existingParentLane) {
-        parentAssignments.push({ parent: firstParent, laneId: existingParentLane.id });
+        parentAssignments.push({ parent: firstParent, laneId: existingParentLane.id, collapsed });
         const currentIndex = active.findIndex((lane) => lane.id === node.id);
         if (currentIndex !== -1) active.splice(currentIndex, 1);
       } else {
         node.target = firstParent;
-        parentAssignments.push({ parent: firstParent, laneId: node.id });
+        if (collapsed) node.collapsed = true;
+        else delete node.collapsed;
+        parentAssignments.push({ parent: firstParent, laneId: node.id, collapsed });
       }
     }
 
-    for (const parent of commit.parents.slice(1)) {
-      const existingParentLane = active.find((lane) => lane.target === parent);
+    for (const parent of parents.slice(1)) {
+      const collapsed = parentIsCollapsed(parent);
+      const existingParentLane = active.find(
+        (lane) => lane.target === parent && Boolean(lane.collapsed) === collapsed,
+      );
       if (existingParentLane) {
-        parentAssignments.push({ parent, laneId: existingParentLane.id });
+        parentAssignments.push({ parent, laneId: existingParentLane.id, collapsed });
         continue;
       }
 
-      const lane = createLane(parent);
+      const lane = createLane(parent, collapsed);
       const assignedIndices = parentAssignments
         .map((assignment) => active.findIndex((candidate) => candidate.id === assignment.laneId))
         .filter((index) => index >= 0);
@@ -121,7 +138,7 @@ export function layoutCommitGraph(
         ? Math.max(...assignedIndices) + 1
         : Math.min(nodeLane + 1, active.length);
       active.splice(insertionIndex, 0, lane);
-      parentAssignments.push({ parent, laneId: lane.id });
+      parentAssignments.push({ parent, laneId: lane.id, collapsed });
     }
 
     const lanesAfter = cloneLanes(active);
@@ -133,6 +150,7 @@ export function layoutCommitGraph(
           toLane: nodeLane,
           colorIndex: lane.colorIndex,
           kind: 'incoming',
+          ...(lane.collapsed ? { collapsed: true } : {}),
         });
         continue;
       }
@@ -144,6 +162,7 @@ export function layoutCommitGraph(
           toLane,
           colorIndex: lane.colorIndex,
           kind: 'through',
+          ...(lane.collapsed ? { collapsed: true } : {}),
         });
       }
     }
@@ -157,6 +176,7 @@ export function layoutCommitGraph(
           toLane,
           colorIndex: lane?.colorIndex ?? nodeColor,
           kind: 'parent',
+          ...(assignment.collapsed ? { collapsed: true } : {}),
         });
       }
     }

@@ -138,6 +138,36 @@ function initializeCommitRangeFixture() {
 }
 
 describe('WorkbenchApp', () => {
+  it('marks structural graph context rows separately from filter matches', () => {
+    const { commits, middle } = initializeCommitRangeFixture();
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'graph-context-row',
+            repositoryId: 'repo-commit-range',
+            refs: [],
+            commits: commits.map((commit) =>
+              commit.hash === middle ? { ...commit, filterMatch: false } : commit,
+            ),
+            filters: { text: 'commit', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByText('middle commit').closest('[role="row"]')).toHaveClass(
+      'filter-context',
+    );
+    expect(screen.getByText('newest commit').closest('[role="row"]')).not.toHaveClass(
+      'filter-context',
+    );
+  });
+
   it('renders the four-region Git log workspace', () => {
     render(<App />);
 
@@ -1582,6 +1612,105 @@ describe('WorkbenchApp', () => {
       repositoryId: 'repo-bounded-pages',
       skip: 5,
     });
+  });
+
+  it('compensates scrolling when an evicted graph context row does not advance the Git offset', () => {
+    render(<App />);
+    const commit = (index: number, filterMatch?: false) => ({
+      hash: index.toString(16).padStart(40, '0'),
+      parents: [],
+      subject: filterMatch === false ? 'graph context' : `match ${String(index)}`,
+      authorName: 'Alice',
+      authorEmail: 'alice@example.com',
+      authorTime: 10 - index,
+      commitTime: 10 - index,
+      refs: [],
+      ...(filterMatch === false ? { filterMatch } : {}),
+    });
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-context-scroll',
+            repositories: [
+              {
+                id: 'repo-context-scroll',
+                rootUri: 'file:///workspace/project',
+                gitDirUri: 'file:///workspace/project/.git',
+                displayName: 'project',
+                isBare: false,
+              },
+            ],
+            selectedRepositoryId: 'repo-context-scroll',
+            pageSize: 1,
+            maxCachedCommits: 3,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'ready-context-scroll',
+            repositoryId: 'repo-context-scroll',
+            refs: [],
+            commits: [commit(1), commit(99, false), commit(2)],
+            filters: { text: 'match', branches: [], authors: [], paths: [] },
+            replace: true,
+            hasMore: true,
+          },
+        }),
+      );
+    });
+
+    const viewport = document.querySelector<HTMLElement>('.commit-viewport');
+    expect(viewport).not.toBeNull();
+    if (!viewport) return;
+    viewport.scrollTop = 56;
+    fireEvent.scroll(viewport);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'page-context-scroll-1',
+            repositoryId: 'repo-context-scroll',
+            refs: [],
+            commits: [commit(3)],
+            filters: { text: 'match', branches: [], authors: [], paths: [] },
+            replace: false,
+            hasMore: true,
+          },
+        }),
+      );
+    });
+    expect(viewport.scrollTop).toBe(28);
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoryData',
+            requestId: 'page-context-scroll-2',
+            repositoryId: 'repo-context-scroll',
+            refs: [],
+            commits: [commit(4)],
+            filters: { text: 'match', branches: [], authors: [], paths: [] },
+            replace: false,
+            hasMore: false,
+          },
+        }),
+      );
+    });
+    expect(viewport.scrollTop).toBe(0);
   });
 
   it('loads the next page when the final commits enter view above the reveal spacer', () => {

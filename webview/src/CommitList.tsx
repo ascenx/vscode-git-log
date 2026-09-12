@@ -197,7 +197,7 @@ export function CommitList({
             <div
               className={`commit-row${selectedHashes.has(commit.hash) ? ' selected' : ''}${
                 headHash === commit.hash ? ' head-row' : ''
-              }`}
+              }${commit.filterMatch === false ? ' filter-context' : ''}`}
               style={{ top: index * rowHeight }}
               role="row"
               aria-rowindex={index + 2}

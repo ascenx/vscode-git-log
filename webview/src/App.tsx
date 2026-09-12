@@ -94,6 +94,7 @@ interface WorkbenchState {
   maxCachedCommits: number;
   nextLogOffset: number;
   startLogOffset: number;
+  startRowOffset: number;
   graphContinuation: GraphContinuationState | undefined;
   windowAnchorReady: boolean;
   operationRepositoryIds: ReadonlySet<string>;
@@ -160,6 +161,7 @@ const initialState: WorkbenchState = {
   maxCachedCommits: 5000,
   nextLogOffset: 0,
   startLogOffset: 0,
+  startRowOffset: 0,
   graphContinuation: undefined,
   windowAnchorReady: false,
   operationRepositoryIds: new Set(),
@@ -504,7 +506,7 @@ export function App() {
   const pendingScrollPosition = useRef<
     { repositoryId: string; scrollTop: number } | undefined
   >(undefined);
-  const previousWindowOffsetByRepository = useRef<Map<string, number>>(new Map());
+  const previousWindowRowOffsetByRepository = useRef<Map<string, number>>(new Map());
   const lastWindowAnchorSignature = useRef<string | undefined>(undefined);
   const historyParentChoices = useRef<Map<string, string>>(new Map());
   const logWindowRef = useRef({
@@ -754,20 +756,20 @@ export function App() {
   useEffect(() => {
     const repositoryId = state.selectedRepositoryId;
     if (!repositoryId || !state.windowAnchorReady) return;
-    const signature = `${repositoryId}:${String(state.startLogOffset)}:${JSON.stringify(
-      state.graphContinuation ?? null,
-    )}`;
+    const signature = `${repositoryId}:${String(state.startLogOffset)}:${String(
+      state.startRowOffset,
+    )}:${JSON.stringify(state.graphContinuation ?? null)}`;
     if (lastWindowAnchorSignature.current === signature) return;
     lastWindowAnchorSignature.current = signature;
     if (scrollPersistTimer.current !== undefined) {
       window.clearTimeout(scrollPersistTimer.current);
       scrollPersistTimer.current = undefined;
     }
-    const previousOffset = previousWindowOffsetByRepository.current.get(repositoryId);
-    previousWindowOffsetByRepository.current.set(repositoryId, state.startLogOffset);
+    const previousRowOffset = previousWindowRowOffsetByRepository.current.get(repositoryId);
+    previousWindowRowOffsetByRepository.current.set(repositoryId, state.startRowOffset);
     let scrollTop = scrollTopByRepositoryRef.current[repositoryId] ?? 0;
-    if (previousOffset !== undefined && state.startLogOffset > previousOffset) {
-      scrollTop = Math.max(0, scrollTop - (state.startLogOffset - previousOffset) * 28);
+    if (previousRowOffset !== undefined && state.startRowOffset > previousRowOffset) {
+      scrollTop = Math.max(0, scrollTop - (state.startRowOffset - previousRowOffset) * 28);
       setScrollTopByRepository((current) => {
         const next = { ...current, [repositoryId]: scrollTop };
         scrollTopByRepositoryRef.current = next;
@@ -788,6 +790,7 @@ export function App() {
     state.graphContinuation,
     state.selectedRepositoryId,
     state.startLogOffset,
+    state.startRowOffset,
     state.windowAnchorReady,
     vscode,
   ]);
@@ -832,6 +835,7 @@ export function App() {
             maxCachedCommits: message.maxCachedCommits ?? 5000,
             nextLogOffset: 0,
             startLogOffset: 0,
+            startRowOffset: 0,
             graphContinuation: undefined,
             windowAnchorReady: false,
             operationRepositoryIds: new Set(),
@@ -939,6 +943,7 @@ export function App() {
                 graphContinuation: current.graphContinuation,
                 nextLogOffset: current.nextLogOffset,
                 startLogOffset: current.startLogOffset,
+                startRowOffset: current.startRowOffset,
               },
               message.commits,
               current.maxCachedCommits,
@@ -962,6 +967,7 @@ export function App() {
                 : current.commitListRevision,
               nextLogOffset: commitWindow.nextLogOffset,
               startLogOffset: commitWindow.startLogOffset,
+              startRowOffset: commitWindow.startRowOffset,
               graphContinuation: commitWindow.graphContinuation,
               windowAnchorReady: true,
               ...(message.selectedHash ? { selectedHash: message.selectedHash } : {}),
@@ -1006,6 +1012,7 @@ export function App() {
                 commitListRevision: current.commitListRevision + 1,
                 nextLogOffset: 0,
                 startLogOffset: 0,
+                startRowOffset: 0,
                 graphContinuation: undefined,
                 windowAnchorReady: false,
                 selectedHash: undefined,
@@ -1396,6 +1403,7 @@ export function App() {
         ...current,
         startLogOffset: 0,
         nextLogOffset: 0,
+        startRowOffset: 0,
         graphContinuation: undefined,
         windowAnchorReady: true,
       }));
@@ -1458,6 +1466,7 @@ export function App() {
       commitListRevision: current.commitListRevision + 1,
       nextLogOffset: 0,
       startLogOffset: 0,
+      startRowOffset: 0,
       graphContinuation: undefined,
       windowAnchorReady: false,
       selectedHash: undefined,

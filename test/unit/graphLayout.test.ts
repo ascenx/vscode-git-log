@@ -82,4 +82,81 @@ describe('layoutCommitGraph', () => {
     ]);
     expect(result.rows.map((row: { nodeLane: number }) => row.nodeLane)).toEqual([0, 0, 1, 1, 0]);
   });
+
+  it('uses collapsed graph parents for commits separated by hidden search results', async () => {
+    const modulePath = '../../src/graph/layoutCommitGraph';
+    const graphModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);
+    expect(graphModule, 'the commit graph layout module must exist').toBeDefined();
+    if (!graphModule) return;
+
+    const result = graphModule.layoutCommitGraph([
+      { ...commit('visible-child', ['hidden-parent']), graphParents: ['visible-parent'] },
+      { ...commit('visible-parent', ['older-hidden-parent']), graphParents: [] },
+    ]);
+
+    expect(result.maxLaneCount).toBe(1);
+    expect(result.rows.map((row: { nodeLane: number }) => row.nodeLane)).toEqual([0, 0]);
+    expect(result.continuation.lanes).toEqual([]);
+  });
+
+  it('keeps a hidden ancestry route collapsed until its visible parent is reached', async () => {
+    const modulePath = '../../src/graph/layoutCommitGraph';
+    const graphModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);
+    expect(graphModule, 'the commit graph layout module must exist').toBeDefined();
+    if (!graphModule) return;
+
+    const result = graphModule.layoutCommitGraph([
+      { ...commit('visible-child', ['hidden-parent']), graphParents: ['visible-parent'] },
+      { ...commit('unrelated-match'), graphParents: [] },
+      { ...commit('visible-parent'), graphParents: [] },
+    ]);
+
+    expect(result.rows[0]?.connections).toEqual([
+      expect.objectContaining({ kind: 'parent', collapsed: true }),
+    ]);
+    expect(result.rows[1]?.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'through', collapsed: true }),
+      ]),
+    );
+    expect(result.rows[2]?.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ kind: 'incoming', collapsed: true }),
+      ]),
+    );
+    expect(result.continuation.lanes).toEqual([]);
+  });
+
+  it('keeps direct and collapsed routes separate when they share a visible parent across pages', async () => {
+    const modulePath = '../../src/graph/layoutCommitGraph';
+    const graphModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);
+    expect(graphModule, 'the commit graph layout module must exist').toBeDefined();
+    if (!graphModule) return;
+
+    const firstPage = graphModule.layoutCommitGraph([
+      { ...commit('collapsed-child', ['hidden']), graphParents: ['parent'] },
+    ]);
+    const secondPage = graphModule.layoutCommitGraph(
+      [
+        { ...commit('direct-child', ['parent']), graphParents: ['parent'] },
+        { ...commit('parent'), graphParents: [] },
+      ],
+      firstPage.continuation,
+    );
+
+    expect(secondPage.rows[0]?.lanesAfter).toEqual([
+      expect.objectContaining({ target: 'parent', collapsed: true }),
+      expect.not.objectContaining({ collapsed: true }),
+    ]);
+    const incoming = secondPage.rows[1]?.connections.filter(
+      (connection: { kind: string }) => connection.kind === 'incoming',
+    );
+    expect(incoming).toHaveLength(2);
+    expect(incoming).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ collapsed: true }),
+        expect.not.objectContaining({ collapsed: true }),
+      ]),
+    );
+  });
 });

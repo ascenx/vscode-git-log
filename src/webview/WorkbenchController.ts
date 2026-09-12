@@ -1008,19 +1008,34 @@ export class WorkbenchController {
           Math.max(this.options.initialPageSize, restoredPageSize),
         )
       : Math.min(this.options.pageSize, this.options.maxCachedCommits ?? 5000);
+    const maxGraphRows = this.options.maxCachedCommits ?? 5000;
     const commits: CommitSummary[] = [];
-    while (commits.length < limit) {
-      const batchLimit = Math.min(5000, limit - commits.length);
+    let loadedLogCount = 0;
+    let hasMore = false;
+    while (loadedLogCount < limit && commits.length < maxGraphRows) {
+      const remainingGraphRows = maxGraphRows - commits.length;
+      const batchLimit = Math.min(5000, limit - loadedLogCount, remainingGraphRows);
       const batch = await this.options.gitService.getLog(cwd, {
         limit: batchLimit,
-        skip: skip + commits.length,
+        skip: skip + loadedLogCount,
         refs,
+        maxGraphRows: remainingGraphRows,
         filters,
         signal: abortController.signal,
       });
       if (logSequence !== this.logRequestSequence) return;
       commits.push(...batch);
-      if (batch.length < batchLimit) break;
+      const batchLogCount = batch.filter((commit) => commit.filterMatch !== false).length;
+      loadedLogCount += batchLogCount;
+      const reachedGraphLimit = commits.length >= maxGraphRows;
+      if (batchLogCount < batchLimit) {
+        hasMore = false;
+        break;
+      }
+      if (reachedGraphLimit || loadedLogCount === limit) {
+        hasMore = true;
+        break;
+      }
     }
     if (abortController.signal.aborted) return;
     if (logSequence !== this.logRequestSequence) return;
@@ -1065,7 +1080,7 @@ export class WorkbenchController {
           }
         : {}),
       replace,
-      hasMore: commits.length === limit,
+      hasMore,
     });
 
     if (replace && restoredSelectedHash && !abortController.signal.aborted) {

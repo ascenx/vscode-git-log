@@ -750,6 +750,17 @@ select:focus-visible,
   background: color-mix(in srgb, var(--vscode-gitDecoration-addedResourceForeground) 9%, transparent);
 }
 
+.commit-row.filter-context:not(.selected) {
+  color: var(--vscode-descriptionForeground);
+}
+
+.commit-row.filter-context:not(.selected) .commit-subject,
+.commit-row.filter-context:not(.selected) .commit-author,
+.commit-row.filter-context:not(.selected) .commit-date,
+.commit-row.filter-context:not(.selected) .commit-refs {
+  opacity: 0.65;
+}
+
 .commit-row > span {
   min-width: 0;
   height: 100%;
@@ -766,8 +777,14 @@ select:focus-visible,
   gap: 8px;
 }
 
-.commit-graph {
+.commit-graph-viewport {
+  height: 28px;
   flex: 0 0 auto;
+  overflow: hidden;
+}
+
+.commit-graph {
+  display: block;
   overflow: visible;
 }
 
@@ -1091,6 +1108,8 @@ select:focus-visible,
 }
 
 .commit-subject {
+  min-width: 0;
+  flex: 1;
   overflow: hidden;
   text-overflow: ellipsis;
 }

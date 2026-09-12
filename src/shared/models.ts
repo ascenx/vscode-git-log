@@ -27,6 +27,10 @@ export interface RefLabel {
 export interface CommitSummary {
   hash: CommitHash;
   parents: CommitHash[];
+  /** Parents in the visible, filtered graph after hidden commits have been collapsed. */
+  graphParents?: CommitHash[];
+  /** False for a structural context row retained to explain a filtered graph. */
+  filterMatch?: boolean;
   subject: string;
   authorName: string;
   authorEmail: string;

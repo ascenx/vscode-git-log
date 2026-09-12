@@ -6,6 +6,7 @@ import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { GitRunner } from '../../src/git/GitRunner';
 import { GitService } from '../../src/git/GitService';
+import { layoutCommitGraph } from '../../src/graph/layoutCommitGraph';
 import { extractLineHistoryContextPatch } from '../../src/git/lineHistoryContext';
 import { EMPTY_LOG_FILTERS } from '../../src/git/logQuery';
 
@@ -303,6 +304,7 @@ describe('GitService', () => {
     });
 
     expect(commits.map((commit) => commit.hash)).toEqual([featureHash]);
+    expect(commits[0]).toMatchObject({ graphParents: [] });
   });
 
   it('uses configured remote names when a remote name contains a slash', async () => {
@@ -422,6 +424,8 @@ describe('GitService', () => {
       combined.map((commit) => commit.hash),
     );
     expect(combined.map((commit) => commit.subject)).toEqual(['needle child', 'base ancestor']);
+    expect(combined[0]).toMatchObject({ graphParents: [combined[1]?.hash] });
+    expect(combined[1]).toMatchObject({ graphParents: [] });
   });
 
   it('continues a cached canonical text scan instead of rescanning earlier history pages', async () => {
@@ -430,7 +434,8 @@ describe('GitService', () => {
         Array.from({ length: count }, (_, offset) => {
           const index = start + offset;
           const hash = index.toString(16).padStart(40, '0');
-          return `\x1e${hash}\x00\x00Needle Author\x00needle@example.com\x00${String(
+          const parent = (index + 1).toString(16).padStart(40, '0');
+          return `\x1e${hash}\x00${parent}\x00Needle Author\x00needle@example.com\x00${String(
             20_000 - index,
           )}\x00${String(20_000 - index)}\x00commit ${String(index)}\x00body\x00`;
         }).join(''),
@@ -448,6 +453,7 @@ describe('GitService', () => {
     const filters = { ...EMPTY_LOG_FILTERS, text: 'needle' };
 
     const first = await service.getLog('/repository', { limit: 5000, skip: 0, refs: [], filters });
+    const firstPageLastGraphParents = [...(first.at(-1)?.graphParents ?? [])];
     const second = await service.getLog('/repository', {
       limit: 5000,
       skip: 5000,
@@ -464,15 +470,582 @@ describe('GitService', () => {
     expect(first).toHaveLength(5000);
     expect(second).toHaveLength(5000);
     expect(third).toHaveLength(5000);
+    expect(firstPageLastGraphParents).toEqual([(5000).toString(16).padStart(40, '0')]);
     expect(run.mock.calls.map(([args]) => args)).toEqual([
       expect.arrayContaining(['--max-count=5000', '--skip=0']),
       expect.arrayContaining(['--max-count=5000', '--skip=5000']),
       expect.arrayContaining(['--max-count=5000', '--skip=10000']),
+      expect.arrayContaining(['--max-count=5000', '--skip=15000']),
     ]);
     const calls = run.mock.calls as unknown as Array<
       [readonly string[], { maxStdoutBytes?: number }]
     >;
     expect(calls.every(([, options]) => options.maxStdoutBytes === 64 * 1024 * 1024)).toBe(true);
+  });
+
+  it('preserves visible merge parent order across hidden commits', async () => {
+    const hashes = Object.fromEntries(
+      ['merge', 'hidden-first', 'hidden-second', 'visible-first', 'visible-second'].map(
+        (name, index) => [name, (index + 1).toString(16).padStart(40, '0')],
+      ),
+    );
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const output = Buffer.from(
+      [
+        record(hashes.merge ?? '', [hashes['hidden-first'] ?? '', hashes['hidden-second'] ?? ''], 'needle merge'),
+        record(hashes['hidden-second'] ?? '', [hashes['visible-second'] ?? ''], 'hidden second'),
+        record(hashes['visible-second'] ?? '', [], 'needle second'),
+        record(hashes['hidden-first'] ?? '', [hashes['visible-first'] ?? ''], 'hidden first'),
+        record(hashes['visible-first'] ?? '', [], 'needle first'),
+      ].join(''),
+    );
+    const run = vi.fn().mockResolvedValue({
+      stdout: output,
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+
+    expect(commits[0]?.graphParents).toEqual([
+      hashes['visible-first'],
+      hashes['visible-second'],
+    ]);
+  });
+
+  it('projects hidden merge paths directly onto matching commits', async () => {
+    const hashes = Object.fromEntries(
+      ['visible', 'hidden-merge', 'first', 'second'].map((name, index) => [
+        name,
+        (index + 10).toString(16).padStart(40, '0'),
+      ]),
+    );
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const output = Buffer.from(
+      [
+        record(hashes.visible ?? '', [hashes['hidden-merge'] ?? ''], 'needle visible'),
+        record(
+          hashes['hidden-merge'] ?? '',
+          [hashes.first ?? '', hashes.second ?? ''],
+          'hidden merge',
+        ),
+        record(hashes.second ?? '', [], 'needle second'),
+        record(hashes.first ?? '', [], 'needle first'),
+      ].join(''),
+    );
+    const run = vi.fn().mockResolvedValue({
+      stdout: output,
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+
+    expect(commits.map((commit) => commit.subject)).toEqual([
+      'needle visible',
+      'needle second',
+      'needle first',
+    ]);
+    expect(commits[0]?.graphParents).toEqual([hashes.first, hashes.second]);
+    expect(commits.every((commit) => commit.filterMatch !== false)).toBe(true);
+  });
+
+  it('returns only commits whose content matches the text query', async () => {
+    const [top, merge, first, second] = Array.from({ length: 4 }, (_, index) =>
+      (index + 20).toString(16).padStart(40, '0'),
+    );
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(
+        [
+          record(top ?? '', [merge ?? ''], 'needle top'),
+          record(merge ?? '', [first ?? '', second ?? ''], 'unrelated merge'),
+          record(first ?? '', [], 'needle first'),
+          record(second ?? '', [], 'needle second'),
+        ].join(''),
+      ),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+
+    expect(commits.map((commit) => commit.subject)).toEqual([
+      'needle top',
+      'needle first',
+      'needle second',
+    ]);
+    expect(commits.every((commit) => commit.filterMatch !== false)).toBe(true);
+    expect(commits[0]?.graphParents).toEqual([first, second]);
+  });
+
+  it('rejoins compact visible branches at their next shared visible ancestor', async () => {
+    const names = [
+      'visible-top',
+      'hidden-merge',
+      'hidden-left',
+      'visible-left',
+      'hidden-right',
+      'visible-right',
+      'hidden-shared',
+      'visible-base',
+    ] as const;
+    const hashes = Object.fromEntries(
+      names.map((name, index) => [name, (index + 30).toString(16).padStart(40, '0')]),
+    ) as Record<(typeof names)[number], string>;
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const output = Buffer.from(
+      [
+        record(hashes['visible-top'], [hashes['hidden-merge']], 'needle top'),
+        record(
+          hashes['hidden-merge'],
+          [hashes['hidden-left'], hashes['hidden-right']],
+          'hidden merge',
+        ),
+        record(hashes['hidden-left'], [hashes['visible-left']], 'hidden left'),
+        record(hashes['visible-left'], [hashes['hidden-shared']], 'needle left'),
+        record(hashes['hidden-right'], [hashes['visible-right']], 'hidden right'),
+        record(hashes['visible-right'], [hashes['hidden-shared']], 'needle right'),
+        record(hashes['hidden-shared'], [hashes['visible-base']], 'hidden shared'),
+        record(hashes['visible-base'], [], 'needle base'),
+      ].join(''),
+    );
+    const run = vi.fn().mockResolvedValue({
+      stdout: output,
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+    const graph = layoutCommitGraph(commits);
+
+    expect(commits.map((commit) => commit.subject)).toEqual([
+      'needle top',
+      'needle left',
+      'needle right',
+      'needle base',
+    ]);
+    expect(commits.map((commit) => commit.graphParents)).toEqual([
+      [hashes['visible-left'], hashes['visible-right']],
+      [hashes['visible-base']],
+      [hashes['visible-base']],
+      [],
+    ]);
+    expect(commits.every((commit) => commit.filterMatch !== false)).toBe(true);
+    expect(graph.maxLaneCount).toBe(2);
+    expect(graph.rows[2]?.connections).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ fromLane: 1, toLane: 0, kind: 'parent' }),
+      ]),
+    );
+    expect(graph.continuation.lanes).toEqual([]);
+  });
+
+  it('does not return repeated hidden split-and-rejoin segments as search results', async () => {
+    const diamondCount = 8;
+    let nextHash = 100;
+    const hash = (): string => (nextHash++).toString(16).padStart(40, '0');
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const top = hash();
+    const base = hash();
+    const diamonds = Array.from({ length: diamondCount }, () => ({
+      split: hash(),
+      left: hash(),
+      right: hash(),
+      join: hash(),
+    }));
+    const output: string[] = [];
+    output.push(record(top, [diamonds[0]?.split ?? base], 'needle top'));
+    for (const [index, diamond] of diamonds.entries()) {
+      const next = diamonds[index + 1]?.split ?? base;
+      output.push(
+        record(diamond.split, [diamond.left, diamond.right], `hidden split ${String(index)}`),
+        record(diamond.left, [diamond.join], `hidden left ${String(index)}`),
+        record(diamond.right, [diamond.join], `hidden right ${String(index)}`),
+        record(diamond.join, [next], `hidden join ${String(index)}`),
+      );
+    }
+    output.push(record(base, [], 'needle base'));
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(output.join('')),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 20,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+    const graph = layoutCommitGraph(commits);
+    const connectionCount = graph.rows.reduce(
+      (total, row) => total + row.connections.length,
+      0,
+    );
+
+    expect(commits.map((commit) => commit.subject)).toEqual(['needle top', 'needle base']);
+    expect(commits.every((commit) => commit.filterMatch !== false)).toBe(true);
+    expect(commits[0]?.graphParents).toEqual([base]);
+    expect(graph.maxLaneCount).toBe(1);
+    expect(connectionCount).toBeLessThanOrEqual(commits.length * 3);
+    expect(graph.continuation.lanes).toEqual([]);
+  });
+
+  it('reconnects a deep hidden merge chain to its visible parent', async () => {
+    const hiddenCount = 80;
+    let nextHash = 300;
+    const hash = (): string => (nextHash++).toString(16).padStart(40, '0');
+    const top = hash();
+    const base = hash();
+    const hidden = Array.from({ length: hiddenCount }, hash);
+    const noise = Array.from({ length: hiddenCount }, hash);
+    const sides = Array.from({ length: hiddenCount }, hash);
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const output = [record(top, [hidden[0] ?? base], 'needle top')];
+    for (let index = 0; index < hiddenCount; index += 1) {
+      output.push(
+        record(noise[index] ?? '', [], `needle unrelated ${String(index)}`),
+        record(
+          hidden[index] ?? '',
+          [hidden[index + 1] ?? base, sides[index] ?? ''],
+          `hidden merge ${String(index)}`,
+        ),
+      );
+    }
+    output.push(record(base, [], 'needle base'));
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(output.join('')),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 200,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+
+    expect(commits).toHaveLength(hiddenCount + 2);
+    expect(commits.every((commit) => commit.filterMatch !== false)).toBe(true);
+    expect(commits[0]?.graphParents).toEqual([base]);
+    expect(layoutCommitGraph(commits).continuation.lanes).toEqual([]);
+  });
+
+  it('caps structural graph rows and closes routes that exceed the render budget', async () => {
+    let nextHash = 500;
+    const hash = (): string => (nextHash++).toString(16).padStart(40, '0');
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const top = hash();
+    const base = hash();
+    const diamonds = Array.from({ length: 20 }, () => ({
+      split: hash(),
+      left: hash(),
+      right: hash(),
+      join: hash(),
+    }));
+    const output = [record(top, [diamonds[0]?.split ?? base], 'needle top')];
+    for (const [index, diamond] of diamonds.entries()) {
+      output.push(
+        record(diamond.split, [diamond.left, diamond.right], `hidden split ${String(index)}`),
+        record(diamond.left, [diamond.join], `hidden left ${String(index)}`),
+        record(diamond.right, [diamond.join], `hidden right ${String(index)}`),
+        record(
+          diamond.join,
+          [diamonds[index + 1]?.split ?? base],
+          `hidden join ${String(index)}`,
+        ),
+      );
+    }
+    output.push(record(base, [], 'needle base'));
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(output.join('')),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 2,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+      maxGraphRows: 10,
+    });
+    const returnedHashes = new Set(commits.map((commit) => commit.hash));
+
+    expect(commits.length).toBeLessThanOrEqual(10);
+    expect(commits.filter((commit) => commit.filterMatch !== false)).toHaveLength(2);
+    expect(
+      commits.every((commit) =>
+        (commit.graphParents ?? commit.parents).every((parent) => returnedHashes.has(parent)),
+      ),
+    ).toBe(true);
+    expect(layoutCommitGraph(commits).continuation.lanes).toEqual([]);
+  });
+
+  it('does not leave a cross-page route to structural context omitted by the next page', async () => {
+    const [first, second, context, left, right] = Array.from({ length: 5 }, (_, index) =>
+      (index + 800).toString(16).padStart(40, '0'),
+    );
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(
+        [
+          record(first ?? '', [context ?? ''], 'needle first'),
+          record(second ?? '', [], 'needle second'),
+          record(context ?? '', [left ?? '', right ?? ''], 'hidden context'),
+          record(left ?? '', [], 'hidden left'),
+          record(right ?? '', [], 'hidden right'),
+        ].join(''),
+      ),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const service = new GitService({ run } as never);
+    const filters = { ...EMPTY_LOG_FILTERS, text: 'needle' };
+
+    const firstPage = await service.getLog('/repository', {
+      limit: 1,
+      skip: 0,
+      refs: [],
+      filters,
+      maxGraphRows: 1,
+    });
+    const secondPage = await service.getLog('/repository', {
+      limit: 1,
+      skip: 1,
+      refs: [],
+      filters,
+      maxGraphRows: 1,
+    });
+    const firstGraph = layoutCommitGraph(firstPage);
+    const secondGraph = layoutCommitGraph(secondPage, firstGraph.continuation);
+
+    expect(firstPage[0]?.graphParents).toEqual([]);
+    expect(secondPage.map((commit) => commit.subject)).toEqual(['needle second']);
+    expect(secondGraph.continuation.lanes).toEqual([]);
+  });
+
+  it('keeps cached graph projection stable when a later request has a larger row budget', async () => {
+    let nextHash = 850;
+    const hash = (): string => (nextHash++).toString(16).padStart(40, '0');
+    const [top, split, left, right, join, base] = Array.from({ length: 6 }, hash);
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(
+        [
+          record(top ?? '', [split ?? ''], 'needle top'),
+          record(split ?? '', [left ?? '', right ?? ''], 'hidden split'),
+          record(left ?? '', [join ?? ''], 'hidden left'),
+          record(right ?? '', [join ?? ''], 'hidden right'),
+          record(join ?? '', [base ?? ''], 'hidden join'),
+          record(base ?? '', [], 'needle base'),
+        ].join(''),
+      ),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+    const service = new GitService({ run } as never);
+    const filters = { ...EMPTY_LOG_FILTERS, text: 'needle' };
+
+    const compact = await service.getLog('/repository', {
+      limit: 1,
+      skip: 0,
+      refs: [],
+      filters,
+      maxGraphRows: 1,
+    });
+    const expanded = await service.getLog('/repository', {
+      limit: 2,
+      skip: 0,
+      refs: [],
+      filters,
+      maxGraphRows: 5,
+    });
+
+    expect(compact).toHaveLength(1);
+    expect(expanded).toHaveLength(2);
+    expect(expanded.every((commit) => commit.filterMatch !== false)).toBe(true);
+    expect(expanded[0]?.graphParents).toEqual([base]);
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps a branch anchor when the preferred hidden path rejoins a direct parent', async () => {
+    const [top, split, hidden, join, base] = Array.from({ length: 5 }, (_, index) =>
+      (index + 900).toString(16).padStart(40, '0'),
+    );
+    const record = (commitHash: string, parents: string[], subject: string): string =>
+      `\x1e${commitHash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const run = vi.fn().mockResolvedValue({
+      stdout: Buffer.from(
+        [
+          record(top ?? '', [split ?? ''], 'needle top'),
+          record(split ?? '', [hidden ?? '', join ?? ''], 'hidden split'),
+          record(hidden ?? '', [join ?? ''], 'hidden branch'),
+          record(join ?? '', [base ?? ''], 'hidden join'),
+          record(base ?? '', [], 'needle base'),
+        ].join(''),
+      ),
+      stderr: Buffer.alloc(0),
+      exitCode: 0,
+      durationMs: 1,
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit: 2,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+    const graph = layoutCommitGraph(commits);
+
+    expect(commits.map((commit) => commit.subject)).toEqual([
+      'needle top',
+      'needle base',
+    ]);
+    expect(commits[0]?.graphParents).toEqual([base]);
+    expect(graph.maxLaneCount).toBe(1);
+    expect(graph.continuation.lanes).toEqual([]);
+  });
+
+  it('does not revise a returned graph frontier when lookahead matches another branch', async () => {
+    const sourceHash = 'a'.repeat(40);
+    const unrelatedHash = 'b'.repeat(40);
+    const delayedParentHash = 'c'.repeat(40);
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const firstBatch = Buffer.from(
+      [
+        record(sourceHash, [delayedParentHash], 'needle source'),
+        record(unrelatedHash, [], 'needle unrelated'),
+        ...Array.from({ length: 4998 }, (_, index) =>
+          record((index + 100).toString(16).padStart(40, '0'), [], 'hidden'),
+        ),
+      ].join(''),
+    );
+    const noMatchBatch = Buffer.from(
+      Array.from({ length: 5000 }, (_, index) =>
+        record((index + 6000).toString(16).padStart(40, '0'), [], 'hidden'),
+      ).join(''),
+    );
+    const delayedParentBatch = Buffer.from(
+      record(delayedParentHash, [], 'needle delayed parent'),
+    );
+    const run = vi.fn(async (args: readonly string[]) => {
+      const skip = args.find((argument) => argument.startsWith('--skip='));
+      return {
+        stdout:
+          skip === '--skip=0'
+            ? firstBatch
+            : skip === '--skip=5000'
+              ? noMatchBatch
+              : delayedParentBatch,
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        durationMs: 1,
+      };
+    });
+    const service = new GitService({ run } as never);
+    const filters = { ...EMPTY_LOG_FILTERS, text: 'needle' };
+
+    const first = await service.getLog('/repository', {
+      limit: 1,
+      skip: 0,
+      refs: [],
+      filters,
+    });
+    expect(first[0]?.graphParents).toEqual([]);
+
+    await service.getLog('/repository', { limit: 2, skip: 1, refs: [], filters });
+    const repeated = await service.getLog('/repository', {
+      limit: 1,
+      skip: 0,
+      refs: [],
+      filters,
+    });
+
+    expect(first[0]?.graphParents).toEqual([]);
+    expect(repeated[0]?.graphParents).toEqual([]);
+  });
+
+  it('bounds graph lookahead when a full page has no later matches', async () => {
+    const limit = 20;
+    const delayedParentHash = 'f'.repeat(40);
+    const record = (hash: string, parents: string[], subject: string): string =>
+      `\x1e${hash}\x00${parents.join(' ')}\x00Author\x00author@example.com\x001\x001\x00${subject}\x00${subject}\x00`;
+    const firstBatch = Buffer.from(
+      Array.from({ length: 5000 }, (_, index) =>
+        record(
+          (index + 1).toString(16).padStart(40, '0'),
+          index === limit - 1 ? [delayedParentHash] : [],
+          index < limit ? `needle ${String(index)}` : 'hidden',
+        ),
+      ).join(''),
+    );
+    const noMatchBatch = Buffer.from(
+      Array.from({ length: 5000 }, (_, index) =>
+        record((index + 6000).toString(16).padStart(40, '0'), [], 'hidden'),
+      ).join(''),
+    );
+    const run = vi.fn(async (args: readonly string[]) => {
+      const skip = args.find((argument) => argument.startsWith('--skip='));
+      if (skip === '--skip=0') {
+        return { stdout: firstBatch, stderr: Buffer.alloc(0), exitCode: 0, durationMs: 1 };
+      }
+      if (skip === '--skip=5000') {
+        return { stdout: noMatchBatch, stderr: Buffer.alloc(0), exitCode: 0, durationMs: 1 };
+      }
+      throw new Error(`Unexpected unbounded lookahead at ${skip ?? 'unknown offset'}`);
+    });
+
+    const commits = await new GitService({ run } as never).getLog('/repository', {
+      limit,
+      skip: 0,
+      refs: [],
+      filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+
+    expect(commits).toHaveLength(limit);
+    expect(run).toHaveBeenCalledTimes(2);
   });
 
   it('allows ordinary non-text history pages beyond fifty thousand commits', async () => {
@@ -1097,6 +1670,7 @@ describe('GitService', () => {
     });
 
     expect(commits.map((entry) => entry.subject)).toEqual(['feature by Bob']);
+    expect(commits[0]).toMatchObject({ graphParents: [] });
 
     const mainHash = await git(repository, 'rev-parse', 'main');
     const hashOutsideBranch = await service.getLog(repository, {
