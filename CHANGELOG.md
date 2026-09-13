@@ -2,6 +2,20 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.0
+
+### Added
+
+- Added a dedicated `Rebasing` status row with `Continue`, `Skip`, and `Abort` actions. The status opens VS Code Source Control, `Continue` stays disabled until all conflicts are marked resolved, and destructive rebase actions require confirmation.
+
+### Changed
+
+- Text filtering now returns only commits that match the query instead of inserting unrelated merge commits as structural rows.
+
+### Fixed
+
+- Collapsed ancestry through hidden commits directly onto visible search matches, preserving continuous split-and-rejoin topology while eliminating excessive and disconnected graph lanes ([#4](https://github.com/ascenx/vscode-git-log/issues/4)).
+
 ## 0.0.9
 
 ### Added
