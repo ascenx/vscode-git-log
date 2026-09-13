@@ -610,6 +610,34 @@ describe('WorkbenchController', () => {
     });
   });
 
+  it('opens the VS Code Source Control view on request', async () => {
+    const openSourceControl = vi.fn().mockResolvedValue(undefined);
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [],
+      gitService: new GitService(new GitRunner()),
+      gitRunner: new GitRunner(),
+      scanDepth: 0,
+      initialPageSize: 200,
+      pageSize: 500,
+      initialLayout: {
+        refsWidth: 220,
+        filesWidth: 320,
+        detailsHeight: 156,
+        filesViewMode: 'tree',
+      },
+      postMessage: () => Promise.resolve(true),
+      persistLayout: () => Promise.resolve(),
+      openSourceControl,
+    });
+
+    await controller.handleMessage({
+      type: 'openSourceControl',
+      requestId: 'open-source-control',
+    });
+
+    expect(openSourceControl).toHaveBeenCalledOnce();
+  });
+
   it('loads an empty repository without reporting a Git revision error', async () => {
     const repository = await mkdtemp(join(tmpdir(), 'git-log-workbench-empty-controller-'));
     temporaryDirectories.push(repository);

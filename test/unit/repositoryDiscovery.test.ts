@@ -193,6 +193,38 @@ describe('discoverRepositories', () => {
     expect(repositories[0]).toMatchObject({ operationState: 'merge' });
   });
 
+  it('reports whether an in-progress rebase still has unresolved conflicts', async () => {
+    const workspace = await mkdtemp(join(tmpdir(), 'git-log-workbench-rebase-conflicts-'));
+    temporaryDirectories.push(workspace);
+    await initializeRepository(workspace);
+    await execFileAsync('git', ['config', 'user.name', 'Alice'], { cwd: workspace });
+    await execFileAsync('git', ['config', 'user.email', 'alice@example.com'], { cwd: workspace });
+    await writeFile(join(workspace, 'conflict.txt'), 'base\n');
+    await execFileAsync('git', ['add', 'conflict.txt'], { cwd: workspace });
+    await execFileAsync('git', ['commit', '-m', 'base'], { cwd: workspace });
+    await execFileAsync('git', ['checkout', '-b', 'feature'], { cwd: workspace });
+    await writeFile(join(workspace, 'conflict.txt'), 'feature\n');
+    await execFileAsync('git', ['commit', '-am', 'feature'], { cwd: workspace });
+    await execFileAsync('git', ['checkout', 'main'], { cwd: workspace });
+    await writeFile(join(workspace, 'conflict.txt'), 'main\n');
+    await execFileAsync('git', ['commit', '-am', 'main'], { cwd: workspace });
+    await execFileAsync('git', ['checkout', 'feature'], { cwd: workspace });
+    await expect(execFileAsync('git', ['rebase', 'main'], { cwd: workspace })).rejects.toThrow();
+
+    const { inspectRepository } = await import('../../src/repositories/discoverRepositories');
+    await expect(inspectRepository(workspace, new GitRunner())).resolves.toMatchObject({
+      operationState: 'rebase',
+      hasUnresolvedConflicts: true,
+    });
+
+    await writeFile(join(workspace, 'conflict.txt'), 'resolved\n');
+    await execFileAsync('git', ['add', 'conflict.txt'], { cwd: workspace });
+    await expect(inspectRepository(workspace, new GitRunner())).resolves.toMatchObject({
+      operationState: 'rebase',
+      hasUnresolvedConflicts: false,
+    });
+  });
+
   it('loads the configured Git identity for current-user UI ordering', async () => {
     const workspace = await mkdtemp(join(tmpdir(), 'git-log-workbench-user-identity-'));
     temporaryDirectories.push(workspace);

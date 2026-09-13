@@ -167,6 +167,19 @@ async function detectOperationState(gitDir: string): Promise<GitOperationState |
   return undefined;
 }
 
+async function detectUnresolvedConflicts(root: string, runner: GitRunner): Promise<boolean> {
+  try {
+    const result = await runner.run(['ls-files', '--unmerged', '-z'], {
+      cwd: root,
+      timeoutMs: 10_000,
+    });
+    return result.stdout.length > 0;
+  } catch (error) {
+    if (error instanceof GitCommandError) return true;
+    throw error;
+  }
+}
+
 export async function inspectRepository(
   candidate: string,
   runner: GitRunner,
@@ -198,6 +211,9 @@ export async function inspectRepository(
     runOptional(runner, ['config', '--get', 'user.email'], root),
   ]);
   const operationState = isBare ? undefined : await detectOperationState(gitDir);
+  const hasUnresolvedConflicts = operationState
+    ? await detectUnresolvedConflicts(root, runner)
+    : undefined;
   const identity = `${resolve(root)}\0${resolve(gitDir)}`;
 
   return {
@@ -214,6 +230,7 @@ export async function inspectRepository(
     ...(userName ? { userName } : {}),
     ...(userEmail ? { userEmail } : {}),
     ...(operationState ? { operationState } : {}),
+    ...(hasUnresolvedConflicts !== undefined ? { hasUnresolvedConflicts } : {}),
   };
 }
 

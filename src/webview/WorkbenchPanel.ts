@@ -134,6 +134,9 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
       persistState: (state) =>
         Promise.resolve(this.context.workspaceState.update('workbench.state', state)),
       showOutput: () => this.output.show(true),
+      openSourceControl: async () => {
+        await vscode.commands.executeCommand('workbench.view.scm');
+      },
       copyToClipboard: (text) => Promise.resolve(vscode.env.clipboard.writeText(text)),
       onRepositoriesChanged: (discovered) => {
         this.repositories.replace(discovered);

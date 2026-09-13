@@ -147,6 +147,33 @@ describe('workbench styles', () => {
     expect(app).toContain('className="refs-toolbar"');
   });
 
+  it('preserves the operation badge label capitalization', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.operation-badge\s*\{[^}]*border:\s*0;[^}]*cursor:\s*pointer;[^}]*text-transform:\s*none;/su,
+    );
+    expect(styles).toMatch(/\.operation-badge:hover\s*\{[^}]*filter:\s*brightness\(/su);
+    expect(styles).toMatch(/\.operation-badge:active\s*\{[^}]*transform:\s*translateY\(1px\);/su);
+  });
+
+  it('places rebase controls in a dedicated log row', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.log-pane\.rebase-active\s*\{[^}]*grid-template-rows:\s*38px 32px 30px minmax\(0, 1fr\);/su,
+    );
+    expect(styles).toMatch(
+      /\.rebase-status-row\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;/su,
+    );
+    expect(styles).toMatch(
+      /\.rebase-actions\s*\{[^}]*display:\s*flex;[^}]*margin-left:\s*auto;/su,
+    );
+    expect(styles).toMatch(
+      /\.rebase-continue-button\s*\{[^}]*background:\s*var\(--vscode-button-background\);[^}]*color:\s*var\(--vscode-button-foreground\);/su,
+    );
+  });
+
   it('colors additions green and deletions red', async () => {
     const styles = await readFile('webview/src/styles.css', 'utf8');
 

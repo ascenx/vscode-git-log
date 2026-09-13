@@ -77,6 +77,10 @@ function filtersEqual(left: LogFilters, right: LogFilters): boolean {
   );
 }
 
+function operationStateLabel(state: NonNullable<RepositorySummary['operationState']>): string {
+  return state === 'rebase' ? 'Rebasing' : state;
+}
+
 interface WorkbenchState {
   repositories: RepositorySummary[];
   selectedRepositoryId: string | undefined;
@@ -2081,8 +2085,7 @@ export function App() {
           </div>
         ) : null}
         {state.repositories.length > 1 ? (
-          <label className="field repository-field">
-            <span className="sr-only">Repository</span>
+          <div className="field repository-field">
             <select
               aria-label="Repository"
               value={state.selectedRepositoryId ?? ''}
@@ -2093,16 +2096,47 @@ export function App() {
               </option>
               {state.repositories.map((repository) => (
                 <option value={repository.id} key={repository.id}>
-                  {repository.displayName}{repository.operationState ? ` · ${repository.operationState}` : ''}
+                  {repository.displayName}
+                  {repository.operationState
+                    ? ` · ${operationStateLabel(repository.operationState)}`
+                    : ''}
                 </option>
               ))}
             </select>
-            {selectedRepository?.operationState ? (
-              <span className="operation-badge">{selectedRepository.operationState}</span>
+            {selectedRepository?.operationState &&
+            selectedRepository.operationState !== 'rebase' ? (
+              <button
+                className="operation-badge"
+                type="button"
+                aria-label="Open Source Control"
+                title="Open Source Control"
+                onClick={() =>
+                  send({
+                    type: 'openSourceControl',
+                    requestId: requestId('source-control'),
+                  })
+                }
+              >
+                {operationStateLabel(selectedRepository.operationState)}
+              </button>
             ) : null}
-          </label>
-        ) : selectedRepository?.operationState ? (
-          <span className="operation-badge">{selectedRepository.operationState}</span>
+          </div>
+        ) : selectedRepository?.operationState &&
+          selectedRepository.operationState !== 'rebase' ? (
+          <button
+            className="operation-badge"
+            type="button"
+            aria-label="Open Source Control"
+            title="Open Source Control"
+            onClick={() =>
+              send({
+                type: 'openSourceControl',
+                requestId: requestId('source-control'),
+              })
+            }
+          >
+            {operationStateLabel(selectedRepository.operationState)}
+          </button>
         ) : null}
         <label className="field search-field">
           <span className="search-icon" aria-hidden="true">
@@ -2841,7 +2875,9 @@ export function App() {
 
         <section
           ref={logRef}
-          className="log-pane pane"
+          className={`log-pane pane${
+            selectedRepository?.operationState === 'rebase' ? ' rebase-active' : ''
+          }`}
           role="grid"
           aria-label="Commit log"
           tabIndex={0}
@@ -2863,6 +2899,62 @@ export function App() {
           }
         >
           {commitToolbar}
+          {selectedRepository?.operationState === 'rebase' ? (
+            <div
+              className="rebase-status-row"
+              role="toolbar"
+              aria-label="Rebase in progress"
+            >
+              <button
+                className="operation-badge"
+                type="button"
+                aria-label="Open Source Control"
+                title="Open Source Control"
+                onClick={() =>
+                  send({
+                    type: 'openSourceControl',
+                    requestId: requestId('source-control'),
+                  })
+                }
+              >
+                Rebasing
+              </button>
+              <div className="rebase-actions" role="group" aria-label="Rebase actions">
+                <button
+                  className="rebase-action-button rebase-continue-button"
+                  type="button"
+                  disabled={
+                    selectedOperationInFlight ||
+                    Boolean(selectedRepository.hasUnresolvedConflicts)
+                  }
+                  title={
+                    selectedRepository.hasUnresolvedConflicts
+                      ? 'Resolve all conflicts before continuing the rebase'
+                      : 'Continue rebase'
+                  }
+                  onClick={() => runOperation({ kind: 'rebaseContinue' })}
+                >
+                  Continue
+                </button>
+                <button
+                  className="rebase-action-button"
+                  type="button"
+                  disabled={selectedOperationInFlight}
+                  onClick={() => runOperation({ kind: 'rebaseSkip' })}
+                >
+                  Skip
+                </button>
+                <button
+                  className="rebase-action-button"
+                  type="button"
+                  disabled={selectedOperationInFlight}
+                  onClick={() => runOperation({ kind: 'rebaseAbort' })}
+                >
+                  Abort
+                </button>
+              </div>
+            </div>
+          ) : null}
           <div className="log-header-viewport">
             <div className="log-header" role="row" ref={logHeaderRef}>
               <span className="column-header" role="columnheader">

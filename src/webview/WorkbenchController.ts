@@ -69,6 +69,7 @@ export interface WorkbenchControllerOptions {
   persistLayout(layout: WorkbenchLayout): Promise<void>;
   persistState?(state: PersistedWorkbenchState): Promise<void>;
   showOutput?(): void;
+  openSourceControl?(): Promise<void>;
   copyToClipboard?(text: string): Promise<void>;
   operationService?: Pick<GitOperationService, 'run'>;
   confirmOperation?(confirmation: OperationConfirmation): Promise<boolean>;
@@ -377,6 +378,9 @@ export class WorkbenchController {
           break;
         case 'showOutput':
           this.options.showOutput?.();
+          break;
+        case 'openSourceControl':
+          await this.options.openSourceControl?.();
           break;
         case 'copyToClipboard':
           if (!this.options.copyToClipboard) throw new Error('Clipboard integration is not available.');

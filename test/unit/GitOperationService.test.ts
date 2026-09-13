@@ -425,6 +425,18 @@ describe('GitOperationService', () => {
     }
 
     for (const [, args] of cases) expect(calls).toContainEqual(args);
+    expect(operationModule.buildOperationArguments({ kind: 'rebaseContinue' })).toEqual([
+      'rebase',
+      '--continue',
+    ]);
+    expect(operationModule.buildOperationArguments({ kind: 'rebaseSkip' })).toEqual([
+      'rebase',
+      '--skip',
+    ]);
+    expect(operationModule.buildOperationArguments({ kind: 'rebaseAbort' })).toEqual([
+      'rebase',
+      '--abort',
+    ]);
   });
 
   it('requires explicit confirmation before deleting tags or remote branches', () => {
@@ -677,6 +689,12 @@ describe('GitOperationService', () => {
         targetRef: 'refs/heads/main',
       })?.detail,
     ).toContain('origin/refs/heads/main');
+    expect(
+      operationModule.getOperationConfirmation(repository, { kind: 'rebaseSkip' }),
+    ).toMatchObject({ destructive: true, confirmLabel: 'Skip Commit' });
+    expect(
+      operationModule.getOperationConfirmation(repository, { kind: 'rebaseAbort' }),
+    ).toMatchObject({ destructive: true, confirmLabel: 'Abort Rebase' });
     expect(operationModule.getOperationConfirmation(repository, { kind: 'fetch' })).toBeUndefined();
   });
 
@@ -708,6 +726,74 @@ describe('GitOperationService', () => {
         { kind: 'checkout', ref: 'feature' },
       ),
     ).rejects.toThrow('rebase is in progress');
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('allows only rebase controls while a rebase is in progress', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService(
+      { run } as unknown as GitRunner,
+      {
+        inspectRepository: (candidate) =>
+          Promise.resolve({
+            ...candidate,
+            operationState: 'rebase',
+            hasUnresolvedConflicts: false,
+          }),
+      },
+    );
+
+    for (const operation of [
+      { kind: 'rebaseContinue' },
+      { kind: 'rebaseSkip' },
+      { kind: 'rebaseAbort' },
+    ] as const) {
+      await service.run(repository, operation, { confirm: () => Promise.resolve(true) });
+    }
+
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ['rebase', '--continue'],
+      ['rebase', '--skip'],
+      ['rebase', '--abort'],
+    ]);
+    await expect(
+      service.run(repository, { kind: 'checkout', ref: 'feature' }),
+    ).rejects.toThrow('rebase is in progress');
+  });
+
+  it('rejects rebase controls after the rebase has ended', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService(
+      { run } as unknown as GitRunner,
+      passthroughInspection,
+    );
+
+    await expect(service.run(repository, { kind: 'rebaseContinue' })).rejects.toThrow(
+      'No Git rebase is in progress',
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('rejects rebase continue while conflicts remain unresolved', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService(
+      { run } as unknown as GitRunner,
+      {
+        inspectRepository: (candidate) =>
+          Promise.resolve({
+            ...candidate,
+            operationState: 'rebase',
+            hasUnresolvedConflicts: true,
+          }),
+      },
+    );
+
+    await expect(service.run(repository, { kind: 'rebaseContinue' })).rejects.toThrow(
+      'Resolve all conflicts before continuing the rebase',
+    );
     expect(run).not.toHaveBeenCalled();
   });
 

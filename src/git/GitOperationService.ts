@@ -49,6 +49,14 @@ function validateCommitMessage(value: string, label: string): string {
   return value;
 }
 
+function isRebaseControlOperation(operation: GitOperationRequest): boolean {
+  return (
+    operation.kind === 'rebaseContinue' ||
+    operation.kind === 'rebaseSkip' ||
+    operation.kind === 'rebaseAbort'
+  );
+}
+
 export function buildOperationArguments(
   operation: GitOperationRequest,
   forceSourceHash?: string,
@@ -114,6 +122,12 @@ export function buildOperationArguments(
       return ['merge', '--no-edit', validateToken(operation.ref, 'merge ref')];
     case 'rebase':
       return ['rebase', validateToken(operation.ref, 'rebase ref')];
+    case 'rebaseContinue':
+      return ['rebase', '--continue'];
+    case 'rebaseSkip':
+      return ['rebase', '--skip'];
+    case 'rebaseAbort':
+      return ['rebase', '--abort'];
     case 'reset':
       return ['reset', `--${operation.mode}`, validateHash(operation.hash), '--'];
     case 'renameBranch':
@@ -199,6 +213,22 @@ export function getOperationConfirmation(
       title: `Drop ${operation.stash}?`,
       detail: `Repository “${repository.displayName}” will permanently remove ${operation.stash}.`,
       confirmLabel: 'Drop Stash',
+      destructive: true,
+    };
+  }
+  if (operation.kind === 'rebaseSkip') {
+    return {
+      title: 'Skip the current commit?',
+      detail: `Repository “${repository.displayName}” will omit the current commit and continue the rebase.`,
+      confirmLabel: 'Skip Commit',
+      destructive: true,
+    };
+  }
+  if (operation.kind === 'rebaseAbort') {
+    return {
+      title: 'Abort the current rebase?',
+      detail: `Repository “${repository.displayName}” will stop rebasing and restore the branch to its pre-rebase state.`,
+      confirmLabel: 'Abort Rebase',
       destructive: true,
     };
   }
@@ -387,10 +417,21 @@ export class GitOperationService {
       .then(async () => {
         const freshRepository = await this.inspect(repository);
         if (!freshRepository) throw new Error(`Repository “${repository.displayName}” is unavailable.`);
-        if (freshRepository.operationState && operation.kind !== 'fetch') {
+        const isRebaseControl = isRebaseControlOperation(operation);
+        if (
+          freshRepository.operationState &&
+          operation.kind !== 'fetch' &&
+          !(freshRepository.operationState === 'rebase' && isRebaseControl)
+        ) {
           throw new Error(
             `A Git ${freshRepository.operationState} is in progress; finish or abort it first.`,
           );
+        }
+        if (!freshRepository.operationState && isRebaseControl) {
+          throw new Error('No Git rebase is in progress.');
+        }
+        if (operation.kind === 'rebaseContinue' && freshRepository.hasUnresolvedConflicts) {
+          throw new Error('Resolve all conflicts before continuing the rebase.');
         }
         if (operation.kind === 'deleteRemoteBranch') {
           await this.validateRemoteBranchDeletion(freshRepository, operation.remote, operation.branch);
@@ -454,6 +495,9 @@ export class GitOperationService {
           await this.runner.run(buildOperationArguments(preparedOperation, forceSourceHash), {
             cwd: fileURLToPath(freshRepository.rootUri),
             timeoutMs: 10 * 60_000,
+            ...(preparedOperation.kind === 'rebaseContinue'
+              ? { env: { GIT_EDITOR: 'true' } }
+              : {}),
           });
         }
         return { message: `${operation.kind} completed.` };

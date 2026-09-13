@@ -226,12 +226,72 @@ select:focus-visible,
 .operation-badge {
   margin-left: 4px;
   padding: 1px 5px;
+  border: 0;
   border-radius: 8px;
   background: var(--vscode-badge-background);
   color: var(--vscode-badge-foreground);
   font-size: 10px;
   line-height: 16px;
-  text-transform: uppercase;
+  cursor: pointer;
+  text-transform: none;
+}
+
+.operation-badge:hover {
+  filter: brightness(1.12);
+}
+
+.operation-badge:active {
+  transform: translateY(1px);
+}
+
+.rebase-status-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--workbench-header-background);
+}
+
+.rebase-status-row .operation-badge {
+  flex: 0 0 auto;
+  margin-left: 0;
+}
+
+.rebase-actions {
+  display: flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 6px;
+}
+
+.rebase-action-button {
+  min-height: 22px;
+  padding: 1px 8px;
+  border: 1px solid var(--vscode-button-border, transparent);
+  border-radius: 2px;
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  cursor: pointer;
+}
+
+.rebase-action-button:hover:not(:disabled) {
+  background: var(--vscode-button-secondaryHoverBackground);
+}
+
+.rebase-continue-button {
+  background: var(--vscode-button-background);
+  color: var(--vscode-button-foreground);
+}
+
+.rebase-continue-button:hover:not(:disabled) {
+  background: var(--vscode-button-hoverBackground);
+}
+
+.rebase-action-button:disabled {
+  cursor: default;
+  opacity: 0.5;
 }
 
 .filter-popover {
@@ -584,6 +644,10 @@ select:focus-visible,
   grid-column: 3;
   grid-template-rows: 38px 30px minmax(0, 1fr);
   overflow: hidden;
+}
+
+.log-pane.rebase-active {
+  grid-template-rows: 38px 32px 30px minmax(0, 1fr);
 }
 
 .files-resizer {

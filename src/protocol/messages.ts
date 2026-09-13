@@ -96,6 +96,7 @@ export type WebviewToExtensionMessage =
   | { type: 'openStashComparison'; requestId: string; repositoryId: string; hash: string }
   | { type: 'refresh'; requestId: string; repositoryId?: string }
   | { type: 'showOutput'; requestId: string }
+  | { type: 'openSourceControl'; requestId: string }
   | { type: 'copyToClipboard'; requestId: string; text: string }
   | {
       type: 'updateScrollAnchor';
@@ -152,6 +153,9 @@ export type GitOperationRequest =
   | { kind: 'revert'; hash: string }
   | { kind: 'merge'; ref: string }
   | { kind: 'rebase'; ref: string }
+  | { kind: 'rebaseContinue' }
+  | { kind: 'rebaseSkip' }
+  | { kind: 'rebaseAbort' }
   | { kind: 'reset'; hash: string; mode: 'soft' | 'mixed' | 'hard' }
   | { kind: 'renameBranch'; oldName: string; newName: string }
   | { kind: 'deleteBranch'; name: string; force: boolean }
@@ -505,6 +509,10 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
     case 'merge':
     case 'rebase':
       return isSafeGitToken(value.ref);
+    case 'rebaseContinue':
+    case 'rebaseSkip':
+    case 'rebaseAbort':
+      return true;
     case 'reset':
       return isHash(value.hash) && ['soft', 'mixed', 'hard'].includes(String(value.mode));
     case 'renameBranch':
@@ -669,6 +677,7 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
         ...(typeof value.repositoryId === 'string' ? { repositoryId: value.repositoryId } : {}),
       };
     case 'showOutput':
+    case 'openSourceControl':
       return { type: value.type, requestId: value.requestId };
     case 'copyToClipboard':
       return typeof value.text === 'string' && value.text.length <= 100_000

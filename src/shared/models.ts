@@ -58,6 +58,7 @@ export interface RepositorySummary {
   userName?: string;
   userEmail?: string;
   operationState?: GitOperationState;
+  hasUnresolvedConflicts?: boolean;
 }
 
 export type ChangedFileStatus = 'A' | 'M' | 'D' | 'R' | 'C' | 'T' | 'U';

@@ -151,6 +151,16 @@ describe('parseWebviewMessage', () => {
         operation: { kind: 'reset', hash: 'abcdef1', mode: 'hard' },
       }),
     ).toMatchObject({ type: 'runOperation', operation: { kind: 'reset', mode: 'hard' } });
+    for (const kind of ['rebaseContinue', 'rebaseSkip', 'rebaseAbort']) {
+      expect(
+        protocol.parseWebviewMessage({
+          type: 'runOperation',
+          requestId: `operation-${kind}`,
+          repositoryId: 'repository-1',
+          operation: { kind },
+        }),
+      ).toMatchObject({ type: 'runOperation', operation: { kind } });
+    }
     expect(
       protocol.parseWebviewMessage({
         type: 'runOperation',
@@ -249,6 +259,12 @@ describe('parseWebviewMessage', () => {
       type: 'showOutput',
       requestId: 'output-1',
     });
+    expect(
+      protocol.parseWebviewMessage({
+        type: 'openSourceControl',
+        requestId: 'source-control-1',
+      }),
+    ).toEqual({ type: 'openSourceControl', requestId: 'source-control-1' });
     expect(
       protocol.parseWebviewMessage({
         type: 'copyToClipboard',

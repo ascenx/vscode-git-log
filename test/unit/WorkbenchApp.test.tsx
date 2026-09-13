@@ -1170,7 +1170,7 @@ describe('WorkbenchApp', () => {
     );
   });
 
-  it('shows the selected repository Git operation state as a visible badge', () => {
+  it('shows rebase controls in a dedicated row only while rebasing', () => {
     render(<App />);
     act(() => {
       window.dispatchEvent(
@@ -1186,6 +1186,7 @@ describe('WorkbenchApp', () => {
                 displayName: 'project',
                 isBare: false,
                 operationState: 'rebase',
+                hasUnresolvedConflicts: false,
               },
             ],
             selectedRepositoryId: 'repo-operation-badge',
@@ -1201,7 +1202,96 @@ describe('WorkbenchApp', () => {
       );
     });
 
-    expect(screen.getByText('rebase', { selector: '.operation-badge' })).toBeInTheDocument();
+    const rebaseRow = screen.getByRole('toolbar', { name: 'Rebase in progress' });
+    const badge = within(rebaseRow).getByRole('button', { name: 'Open Source Control' });
+    const actions = within(rebaseRow).getByRole('group', { name: 'Rebase actions' });
+    const continueButton = within(actions).getByRole('button', { name: 'Continue' });
+    const skipButton = within(actions).getByRole('button', { name: 'Skip' });
+    const abortButton = within(actions).getByRole('button', { name: 'Abort' });
+    expect(badge).toHaveTextContent('Rebasing');
+    expect(continueButton).toHaveClass('rebase-continue-button');
+    expect(skipButton).toHaveClass('rebase-action-button');
+    expect(abortButton).toHaveClass('rebase-action-button');
+    expect(abortButton).not.toHaveClass('rebase-abort-button');
+    expect(continueButton).toBeEnabled();
+    expect(skipButton).toBeEnabled();
+    expect(abortButton).toBeEnabled();
+
+    fireEvent.click(badge);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({ type: 'openSourceControl' }),
+    );
+
+    fireEvent.click(continueButton);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'runOperation',
+        operation: { kind: 'rebaseContinue' },
+      }),
+    );
+    completeLatestOperation();
+
+    fireEvent.click(skipButton);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({ type: 'runOperation', operation: { kind: 'rebaseSkip' } }),
+    );
+    completeLatestOperation();
+
+    fireEvent.click(abortButton);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({ type: 'runOperation', operation: { kind: 'rebaseAbort' } }),
+    );
+  });
+
+  it('enables rebase continue only after all conflicts are resolved', () => {
+    const repository = {
+      id: 'repo-rebase-conflicts',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      operationState: 'rebase' as const,
+      hasUnresolvedConflicts: true,
+    };
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-rebase-conflicts',
+            repositories: [repository],
+            selectedRepositoryId: repository.id,
+            pageSize: 500,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Skip' })).toBeEnabled();
+    expect(screen.getByRole('button', { name: 'Abort' })).toBeEnabled();
+
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'repositoriesUpdated',
+            requestId: 'rebase-conflicts-resolved',
+            repositories: [{ ...repository, hasUnresolvedConflicts: false }],
+            selectedRepositoryId: repository.id,
+          },
+        }),
+      );
+    });
+
+    expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
   it('keeps write actions blocked throughout an operation refresh and rejects rapid duplicates', () => {

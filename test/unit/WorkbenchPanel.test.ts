@@ -6,6 +6,7 @@ const {
   controllerUpdateWorkspaceRoots,
   controllerOpenHistory,
   controllerOpenFolderHistory,
+  controllerOptions,
   executeCommand,
 } = vi.hoisted(() => {
   return {
@@ -14,6 +15,7 @@ const {
     controllerUpdateWorkspaceRoots: vi.fn().mockResolvedValue(undefined),
     controllerOpenHistory: vi.fn().mockResolvedValue(undefined),
     controllerOpenFolderHistory: vi.fn().mockResolvedValue(undefined),
+    controllerOptions: [] as unknown[],
     executeCommand: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -61,6 +63,10 @@ vi.mock('vscode', () => ({
 
 vi.mock('../../src/webview/WorkbenchController', () => ({
   WorkbenchController: class WorkbenchController {
+    constructor(options: unknown) {
+      controllerOptions.push(options);
+    }
+
     handleMessage = controllerHandleMessage;
     openEditorHistory = controllerOpenHistory;
     openFolderHistory = controllerOpenFolderHistory;
@@ -87,6 +93,7 @@ describe('WorkbenchViewProvider editor history handoff', () => {
     controllerOpenHistory.mockClear();
     controllerOpenFolderHistory.mockClear();
     controllerUpdateWorkspaceRoots.mockReset().mockResolvedValue(undefined);
+    controllerOptions.length = 0;
     executeCommand.mockClear();
   });
 
@@ -152,6 +159,11 @@ describe('WorkbenchViewProvider editor history handoff', () => {
     expect(executeCommand).toHaveBeenCalledTimes(2);
 
     provider.resolveWebviewView(view as never);
+    const options = controllerOptions.at(-1) as
+      | { openSourceControl?(): Promise<void> }
+      | undefined;
+    await options?.openSourceControl?.();
+    expect(executeCommand).toHaveBeenLastCalledWith('workbench.view.scm');
     messageHandler?.({ type: 'ready', requestId: 'ready-history-provider' });
     await vi.waitFor(() => expect(controllerOpenHistory).toHaveBeenCalledTimes(1));
     expect(controllerOpenHistory).toHaveBeenLastCalledWith(latest);
