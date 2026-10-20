@@ -135,7 +135,7 @@ describe('extension contributions', () => {
       };
     };
 
-    expect(packageJson.version).toBe('0.1.0');
+    expect(packageJson.version).toBe('0.1.1');
     expect(packageJson.contributes?.viewsWelcome).toBeUndefined();
     expect(packageJson.contributes?.viewsContainers?.activitybar).toBeUndefined();
     expect(packageJson.contributes?.viewsContainers?.panel).toEqual([

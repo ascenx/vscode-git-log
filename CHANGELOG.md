@@ -2,6 +2,21 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.1
+
+### Changed
+
+- Commit Details and Changed Files reuse successful query results in bounded caches that are invalidated on repository refresh; branch and tag labels still reflect the latest ref snapshot.
+- Multi-commit selections load up to four commits concurrently while preserving selection order, cancellation, and error reporting.
+- Repository refreshes reuse unchanged Git metadata watchers, including shared watchers for linked worktrees, instead of recreating them.
+
+### Fixed
+
+- Fixed context-menu actions such as branch deletion remaining unresponsive after a completed Git operation when a newer query cancelled its post-operation refresh.
+- Preserved active operation locks during workspace rescans so write actions cannot be re-enabled prematurely.
+- Prevented older commit or parent selections from cancelling newer detail queries after asynchronous state persistence.
+- Cancelled pending change notifications for removed repositories and updated shared watcher recipients when worktrees are removed.
+
 ## 0.1.0
 
 ### Added
