@@ -2,6 +2,18 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.2
+
+### Added
+
+- Added `Checkout (Detached HEAD)` to remote branch menus to check out a remote ref without creating a local branch.
+- Added `Switch Back` (`git switch -`) and `Create Branch and Checkout…` (`git switch -c <name>`) to the detached HEAD menu.
+- Added `Push HEAD…` to the detached HEAD menu and toolbar's More actions. Choose a configured remote and an existing or new destination branch to push `HEAD:refs/heads/<branch>` without creating a local branch; non-fast-forward updates are rejected ([#5](https://github.com/ascenx/vscode-git-log/issues/5)).
+
+### Changed
+
+- Detached checkout, switching back, and creating a branch from HEAD now clear the Branch filter while preserving other filters and return the log selection to HEAD, including when its commit hash is unchanged. Subsequent detached HEAD commits remain visible after refresh.
+
 ## 0.1.1
 
 ### Changed
