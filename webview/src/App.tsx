@@ -127,7 +127,7 @@ interface WorkbenchState {
     | undefined;
 }
 
-type WorkbenchRequestScope = 'repositories' | 'log' | 'selection' | 'operation';
+type WorkbenchRequestScope = 'repositories' | 'log' | 'selection' | 'operation' | 'pushHeadTargets';
 
 function requestScopeForMessage(message: WebviewToExtensionMessage): WorkbenchRequestScope | undefined {
   switch (message.type) {
@@ -143,6 +143,8 @@ function requestScopeForMessage(message: WebviewToExtensionMessage): WorkbenchRe
       return 'selection';
     case 'runOperation':
       return 'operation';
+    case 'requestPushHeadTargets':
+      return 'pushHeadTargets';
     default:
       return undefined;
   }
@@ -460,8 +462,18 @@ export function App() {
     | { kind: 'createTag'; repositoryId: string; target: string; value: string }
     | { kind: 'renameBranch'; repositoryId: string; oldName: string; value: string }
     | { kind: 'checkoutRemote'; repositoryId: string; startPoint: string; value: string }
+    | { kind: 'createAndCheckoutBranch'; repositoryId: string; value: string }
     | undefined
   >();
+  const [pushHeadDialog, setPushHeadDialog] = useState<{
+    repositoryId: string;
+    requestId: string;
+    remotes: string[];
+    remote: string;
+    branch: string;
+    loading: boolean;
+    error?: string;
+  }>();
   const [historyParentPicker, setHistoryParentPicker] = useState<
     { repositoryId: string; commit: CommitSummary } | undefined
   >();
@@ -626,6 +638,19 @@ export function App() {
   const selectedOperationInFlight = state.selectedRepositoryId
     ? state.operationRepositoryIds.has(state.selectedRepositoryId)
     : false;
+  const pushHeadOperation: GitOperationRequest | undefined = pushHeadDialog
+    ? { kind: 'pushHead', remote: pushHeadDialog.remote, branch: pushHeadDialog.branch.trim() }
+    : undefined;
+  const canPushHead = Boolean(
+    pushHeadDialog && !pushHeadDialog.loading && !pushHeadDialog.error &&
+    pushHeadDialog.remotes.includes(pushHeadDialog.remote) &&
+    pushHeadDialog.repositoryId === state.selectedRepositoryId &&
+    selectedRepository?.head && !selectedRepository.isBare && !selectedRepository.operationState &&
+    !selectedOperationInFlight && parseWebviewMessage({
+      type: 'runOperation', requestId: pushHeadDialog.requestId,
+      repositoryId: pushHeadDialog.repositoryId, operation: pushHeadOperation,
+    }),
+  );
   const refsCollapsed = Boolean(
     state.layout.refsCollapsed || (responsiveCollapse.refs && !responsiveExpanded.refs),
   );
@@ -821,6 +846,7 @@ export function App() {
           setSquashOperation(undefined);
           setStashDialog(undefined);
           setAmendDialog(undefined);
+          setPushHeadDialog(undefined);
           stashDialogRepository.current = undefined;
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
@@ -870,6 +896,19 @@ export function App() {
                   message: message.messages
                     .map((entry) => entry.message.replace(/\r?\n$/u, ''))
                     .join('\n\n'),
+                }
+              : current,
+          );
+          break;
+        case 'pushHeadTargetsLoaded':
+          requestScopeById.current.delete(message.requestId);
+          setPushHeadDialog((current) =>
+            current && current.requestId === message.requestId &&
+            current.repositoryId === message.repositoryId &&
+            selectedRepositoryIdRef.current === message.repositoryId
+              ? {
+                  ...current, loading: false, remotes: message.remotes,
+                  remote: message.remotes.includes('origin') ? 'origin' : (message.remotes[0] ?? ''),
                 }
               : current,
           );
@@ -999,6 +1038,9 @@ export function App() {
             latestRepositorySelectionRequest.current !== message.requestId
           ) {
             break;
+          }
+          if (message.selectedRepositoryId && message.selectedRepositoryId !== selectedRepositoryIdRef.current) {
+            setPushHeadDialog(undefined);
           }
           setState((current) => {
             const selectedRepositoryId = message.selectedRepositoryId ?? current.selectedRepositoryId;
@@ -1218,6 +1260,15 @@ export function App() {
               pendingFiltersRef.current = undefined;
             }
             const scope = requestScopeById.current.get(message.requestId);
+            if (scope === 'pushHeadTargets') {
+              requestScopeById.current.delete(message.requestId);
+              setPushHeadDialog((current) =>
+                current?.requestId === message.requestId
+                  ? { ...current, loading: false, error: message.message }
+                  : current,
+              );
+              break;
+            }
             if (scope === 'operation' && message.repositoryId) {
               const repositoryId = message.repositoryId;
               if (
@@ -1449,6 +1500,7 @@ export function App() {
     setCommitRevealTarget(undefined);
     setContextMenu(undefined);
     setNamedOperation(undefined);
+    setPushHeadDialog(undefined);
     setFilterPopup(undefined);
     setRefSearch('');
     activeSelectionRequest.current = undefined;
@@ -1935,12 +1987,27 @@ export function App() {
     setContextMenu(undefined);
   };
 
+  const openPushHead = (repositoryId: string): void => {
+    const targetsRequestId = requestId('push-head-targets');
+    setPushHeadDialog({
+      repositoryId, requestId: targetsRequestId, remotes: [],
+      remote: '', branch: '', loading: true,
+    });
+    send({ type: 'requestPushHeadTargets', requestId: targetsRequestId, repositoryId });
+    setContextMenu(undefined);
+  };
+
   const submitNamedOperation = (): void => {
     if (!namedOperation?.value.trim()) return;
     const value = namedOperation.value.trim();
     if (namedOperation.kind === 'createBranch') {
       runOperation(
         { kind: 'createBranch', name: value, startPoint: namedOperation.target },
+        namedOperation.repositoryId,
+      );
+    } else if (namedOperation.kind === 'createAndCheckoutBranch') {
+      runOperation(
+        { kind: 'createAndCheckoutBranch', name: value },
         namedOperation.repositoryId,
       );
     } else if (namedOperation.kind === 'createTag') {
@@ -1992,6 +2059,7 @@ export function App() {
     } else if (event.key === 'Escape') {
       setContextMenu(undefined);
       setNamedOperation(undefined);
+      setPushHeadDialog(undefined);
       setFilterPopup(undefined);
       setHistoryParentPicker(undefined);
     }
@@ -3319,14 +3387,25 @@ export function App() {
               >
                 Pull
               </button>
-              <button
-                type="button"
-                role="menuitem"
-                disabled={!selectedRepository?.currentBranch}
-                onClick={() => runOperation({ kind: 'push' }, contextMenu.repositoryId)}
-              >
-                Push
-              </button>
+              {selectedRepository?.head && !selectedRepository.currentBranch ? (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={selectedOperationInFlight}
+                  onClick={() => openPushHead(contextMenu.repositoryId)}
+                >
+                  Push HEAD…
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!selectedRepository?.currentBranch}
+                  onClick={() => runOperation({ kind: 'push' }, contextMenu.repositoryId)}
+                >
+                  Push
+                </button>
+              )}
               <button
                 type="button"
                 role="menuitem"
@@ -3766,6 +3845,20 @@ export function App() {
                       <button
                         type="button"
                         role="menuitem"
+                        disabled={selectedOperationInFlight}
+                        title="Check out this remote branch in detached HEAD state without creating a local branch"
+                        onClick={() =>
+                          runOperation(
+                            { kind: 'checkoutDetached', ref: contextMenu.ref.fullName },
+                            contextMenu.repositoryId,
+                          )
+                        }
+                      >
+                        Checkout (Detached HEAD)
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
                         onClick={() => {
                           const remote = contextMenu.ref.remote;
                           if (!remote) return;
@@ -3944,6 +4037,44 @@ export function App() {
               </button>
               {!selectedRepository?.isBare && !selectedRepository?.operationState ? (
                 <>
+                  {!selectedRepository?.currentBranch ? (
+                    <>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={selectedOperationInFlight}
+                        title="Push the current HEAD to a remote branch"
+                        onClick={() => openPushHead(contextMenu.repositoryId)}
+                      >
+                        Push HEAD…
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={selectedOperationInFlight}
+                        title="Switch to the previous checkout (git switch -)"
+                        onClick={() => runOperation({ kind: 'switchPrevious' }, contextMenu.repositoryId)}
+                      >
+                        Switch Back
+                      </button>
+                      <button
+                        type="button"
+                        role="menuitem"
+                        disabled={selectedOperationInFlight}
+                        title="Create a new branch at the current HEAD and switch to it"
+                        onClick={() => {
+                          setNamedOperation({
+                            kind: 'createAndCheckoutBranch',
+                            repositoryId: contextMenu.repositoryId,
+                            value: '',
+                          });
+                          setContextMenu(undefined);
+                        }}
+                      >
+                        Create Branch and Checkout…
+                      </button>
+                    </>
+                  ) : null}
                   <button
                     type="button"
                     role="menuitem"
@@ -4286,6 +4417,56 @@ export function App() {
         </div>
       ) : null}
 
+      {pushHeadDialog ? (
+        <div className="operation-dialog-backdrop">
+          <form
+            className="operation-dialog"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Push HEAD"
+            onSubmit={(event) => {
+              event.preventDefault();
+              if (!canPushHead || !pushHeadOperation) return;
+              runOperation(pushHeadOperation, pushHeadDialog.repositoryId);
+              setPushHeadDialog(undefined);
+            }}
+          >
+            <strong>Push HEAD</strong>
+            <label>
+              <span>Remote</span>
+              <select
+                aria-label="Remote"
+                value={pushHeadDialog.remote}
+                disabled={pushHeadDialog.loading || selectedOperationInFlight}
+                onChange={(event) => setPushHeadDialog({ ...pushHeadDialog, remote: event.target.value })}
+              >
+                {pushHeadDialog.remotes.map((remote) => <option key={remote} value={remote}>{remote}</option>)}
+              </select>
+            </label>
+            <label>
+              <span>Target branch</span>
+              <input
+                autoFocus
+                aria-label="Target branch"
+                value={pushHeadDialog.branch}
+                disabled={selectedOperationInFlight}
+                onChange={(event) => setPushHeadDialog({ ...pushHeadDialog, branch: event.target.value })}
+              />
+            </label>
+            {pushHeadDialog.loading ? <span>Loading remotes…</span> : null}
+            {pushHeadDialog.error ? <span role="alert">{pushHeadDialog.error}</span> : null}
+            {!pushHeadDialog.loading && !pushHeadDialog.error && !pushHeadDialog.remotes.length
+              ? <span>No remotes configured.</span> : null}
+            {pushHeadDialog.remote && pushHeadDialog.branch.trim()
+              ? <span>HEAD → {pushHeadDialog.remote}/{pushHeadDialog.branch.trim()}</span> : null}
+            <div className="operation-dialog-actions">
+              <button type="button" onClick={() => setPushHeadDialog(undefined)}>Cancel</button>
+              <button type="submit" disabled={!canPushHead}>Push</button>
+            </div>
+          </form>
+        </div>
+      ) : null}
+
       {namedOperation ? (
         <div className="operation-dialog-backdrop">
           <form
@@ -4295,11 +4476,13 @@ export function App() {
             aria-label={
               namedOperation.kind === 'createBranch'
                 ? 'Create Branch'
-                : namedOperation.kind === 'createTag'
-                  ? 'Create Tag'
-                  : namedOperation.kind === 'checkoutRemote'
-                    ? 'Checkout Remote Branch'
-                    : 'Rename Branch'
+                : namedOperation.kind === 'createAndCheckoutBranch'
+                  ? 'Create Branch and Checkout'
+                  : namedOperation.kind === 'createTag'
+                    ? 'Create Tag'
+                    : namedOperation.kind === 'checkoutRemote'
+                      ? 'Checkout Remote Branch'
+                      : 'Rename Branch'
             }
             onSubmit={(event) => {
               event.preventDefault();
@@ -4308,7 +4491,7 @@ export function App() {
           >
             <label>
               <span>
-                {namedOperation.kind === 'createBranch'
+                {namedOperation.kind === 'createBranch' || namedOperation.kind === 'createAndCheckoutBranch'
                   ? 'Branch name'
                   : namedOperation.kind === 'createTag'
                     ? 'Tag name'
@@ -4319,7 +4502,7 @@ export function App() {
               <input
                 autoFocus
                 aria-label={
-                  namedOperation.kind === 'createBranch'
+                  namedOperation.kind === 'createBranch' || namedOperation.kind === 'createAndCheckoutBranch'
                     ? 'Branch name'
                     : namedOperation.kind === 'createTag'
                       ? 'Tag name'
@@ -4342,11 +4525,13 @@ export function App() {
               <button type="submit" disabled={!namedOperation.value.trim()}>
                 {namedOperation.kind === 'createBranch'
                   ? 'Create Branch'
-                  : namedOperation.kind === 'createTag'
-                    ? 'Create Tag'
-                    : namedOperation.kind === 'checkoutRemote'
-                      ? 'Checkout'
-                      : 'Rename Branch'}
+                  : namedOperation.kind === 'createAndCheckoutBranch'
+                    ? 'Create and Checkout'
+                    : namedOperation.kind === 'createTag'
+                      ? 'Create Tag'
+                      : namedOperation.kind === 'checkoutRemote'
+                        ? 'Checkout'
+                        : 'Rename Branch'}
               </button>
             </div>
           </form>

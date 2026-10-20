@@ -1124,6 +1124,7 @@ select:focus-visible,
 }
 
 .operation-dialog input:not([type='checkbox']),
+.operation-dialog select,
 .operation-dialog textarea {
   height: 28px;
   padding: 0 7px;

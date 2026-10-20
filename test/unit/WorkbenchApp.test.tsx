@@ -168,6 +168,164 @@ describe('WorkbenchApp', () => {
     );
   });
 
+  function updateHeadRepository(head: string, overrides: Record<string, unknown> = {}): void {
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'repositoriesUpdated', requestId: 'head-updated',
+        selectedRepositoryId: 'repo-commit-range',
+        repositories: [{
+          id: 'repo-commit-range', rootUri: 'file:///workspace/commit-range',
+          gitDirUri: 'file:///workspace/commit-range/.git', displayName: 'commit-range',
+          isBare: false, head, ...overrides,
+        }],
+      } }));
+    });
+  }
+
+  function openPushHeadDialog(entry: 'head' | 'toolbar' = 'head') {
+    const { newest } = initializeCommitRangeFixture();
+    updateHeadRepository(newest);
+    if (entry === 'head') fireEvent.contextMenu(screen.getByTitle(newest));
+    else fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Push HEAD…' }));
+    const request = postedMessages.filter((message) => message.type === 'requestPushHeadTargets').at(-1);
+    if (request?.type !== 'requestPushHeadTargets') throw new Error('Expected push targets request');
+    return { request, newest };
+  }
+
+  function loadPushRemotes(requestId: string, remotes: string[]): void {
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'pushHeadTargetsLoaded', requestId, repositoryId: 'repo-commit-range', remotes,
+      } }));
+    });
+  }
+
+  it.each(['head', 'toolbar'] as const)('pushes detached HEAD to the selected destination from the %s menu', (entry) => {
+    const { request, newest } = openPushHeadDialog(entry);
+    const dialog = screen.getByRole('dialog', { name: 'Push HEAD' });
+    expect(within(dialog).getByRole('button', { name: 'Push' })).toBeDisabled();
+    loadPushRemotes(request.requestId, ['upstream', 'origin']);
+    expect(within(dialog).getByRole('combobox', { name: 'Remote' })).toHaveValue('origin');
+    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Remote' }), { target: { value: 'upstream' } });
+    const branch = within(dialog).getByRole('textbox', { name: 'Target branch' });
+    fireEvent.change(branch, { target: { value: 'main:other' } });
+    expect(within(dialog).getByRole('button', { name: 'Push' })).toBeDisabled();
+    fireEvent.change(branch, { target: { value: 'feature/work' } });
+    expect(within(dialog).getByText('HEAD → upstream/feature/work')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Push' }));
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-commit-range',
+      operation: { kind: 'pushHead', remote: 'upstream', branch: 'feature/work' },
+    }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    expect(screen.getByRole('menuitem', { name: 'Push HEAD…' })).toBeDisabled();
+  });
+
+  it('does not push when no remotes are configured', () => {
+    const { request } = openPushHeadDialog();
+    loadPushRemotes(request.requestId, []);
+    expect(screen.getByText('No remotes configured.')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target branch' }), { target: { value: 'feature' } });
+    expect(screen.getByRole('button', { name: 'Push' })).toBeDisabled();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
+  it('ignores stale push target responses after cancelling and reopening the dialog', () => {
+    const { request, newest } = openPushHeadDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Push HEAD…' }));
+    const next = postedMessages.filter((message) => message.type === 'requestPushHeadTargets').at(-1);
+    if (next?.type !== 'requestPushHeadTargets') throw new Error('Expected push targets request');
+    loadPushRemotes(request.requestId, ['stale']);
+    expect(screen.queryByRole('option', { name: 'stale' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Push' })).toBeDisabled();
+    loadPushRemotes(next.requestId, ['upstream']);
+    expect(screen.getByRole('combobox', { name: 'Remote' })).toHaveValue('upstream');
+  });
+
+  it('shows push target loading errors without enabling a push', () => {
+    const { request } = openPushHeadDialog();
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'error', requestId: request.requestId, repositoryId: request.repositoryId,
+      message: 'Unable to read remotes',
+    } })));
+    const dialog = screen.getByRole('dialog', { name: 'Push HEAD' });
+    expect(within(dialog).getByRole('alert')).toHaveTextContent('Unable to read remotes');
+    expect(within(dialog).getByRole('button', { name: 'Push' })).toBeDisabled();
+  });
+
+  it('cancels the HEAD push dialog with Escape without starting an operation', () => {
+    openPushHeadDialog();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Target branch' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog', { name: 'Push HEAD' })).not.toBeInTheDocument();
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
+  it('closes a pending HEAD push dialog when selecting another repository', () => {
+    const { request, newest } = openPushHeadDialog();
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'repositoriesUpdated', requestId: 'add-repository',
+      selectedRepositoryId: 'repo-commit-range',
+      repositories: ['repo-commit-range', 'repo-other'].map((id) => ({
+        id, rootUri: `file:///workspace/${id}`, gitDirUri: `file:///workspace/${id}/.git`,
+        displayName: id, isBare: false, head: newest,
+      })),
+    } })));
+    fireEvent.change(screen.getByRole('combobox', { name: 'Repository' }), { target: { value: 'repo-other' } });
+    loadPushRemotes(request.requestId, ['origin']);
+    expect(screen.queryByRole('dialog', { name: 'Push HEAD' })).not.toBeInTheDocument();
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
+  it('switches back from the detached HEAD menu and disables repeated operations', () => {
+    const { newest } = initializeCommitRangeFixture();
+    updateHeadRepository(newest);
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Switch Back' }));
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-commit-range',
+      operation: { kind: 'switchPrevious' },
+    }));
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    expect(screen.getByRole('menuitem', { name: 'Switch Back' })).toBeDisabled();
+    expect(screen.getByRole('menuitem', { name: 'Create Branch and Checkout…' })).toBeDisabled();
+  });
+
+  it('creates and checks out a named branch from the detached HEAD menu', () => {
+    const { newest } = initializeCommitRangeFixture();
+    updateHeadRepository(newest);
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Create Branch and Checkout…' }));
+    const dialog = screen.getByRole('dialog', { name: 'Create Branch and Checkout' });
+    expect(within(dialog).getByRole('button', { name: 'Create and Checkout' })).toBeDisabled();
+    fireEvent.change(within(dialog).getByRole('textbox', { name: 'Branch name' }), {
+      target: { value: 'feature/saved' },
+    });
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Create and Checkout' }));
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-commit-range',
+      operation: { kind: 'createAndCheckoutBranch', name: 'feature/saved' },
+    }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each([
+    { currentBranch: 'main' },
+    { isBare: true },
+    { operationState: 'rebase' },
+  ])('hides detached HEAD exit operations when unavailable: %j', (overrides) => {
+    const { newest } = initializeCommitRangeFixture();
+    updateHeadRepository(newest, overrides);
+    fireEvent.contextMenu(screen.getByTitle(newest));
+    expect(screen.queryByRole('menuitem', { name: 'Switch Back' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Create Branch and Checkout…' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: 'Push HEAD…' })).not.toBeInTheDocument();
+  });
+
   it('renders the four-region Git log workspace', () => {
     render(<App />);
 
@@ -4608,10 +4766,21 @@ describe('WorkbenchApp', () => {
     expect(within(menu).queryByRole('menuitem', { name: 'Rename…' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Delete…' })).not.toBeInTheDocument();
     expect(within(menu).getByRole('menuitem', { name: 'Checkout as New Local…' })).toBeEnabled();
+    expect(within(menu).getByRole('menuitem', { name: 'Checkout (Detached HEAD)' })).toBeEnabled();
     expect(within(menu).getByRole('menuitem', { name: 'Fetch' })).toBeEnabled();
     expect(within(menu).getByRole('menuitem', { name: 'Delete Remote Branch…' })).toBeEnabled();
     expect(within(menu).getByRole('menuitem', { name: 'New Branch from…' })).toBeEnabled();
 
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Checkout (Detached HEAD)' }));
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-refs',
+      operation: { kind: 'checkoutDetached', ref: 'refs/remotes/origin/feature' },
+    }));
+    fireEvent.contextMenu(remote);
+    expect(screen.getByRole('menuitem', { name: 'Checkout (Detached HEAD)' })).toBeDisabled();
+    completeLatestOperation();
+    fireEvent.contextMenu(remote);
+    menu = screen.getByRole('menu', { name: 'ref actions' });
     fireEvent.click(within(menu).getByRole('menuitem', { name: 'Checkout as New Local…' }));
     expect(screen.getByRole('textbox', { name: 'Local branch name' })).toHaveValue('feature');
     fireEvent.click(screen.getByRole('button', { name: 'Checkout' }));
@@ -4625,6 +4794,7 @@ describe('WorkbenchApp', () => {
     fireEvent.contextMenu(screen.getByTitle('refs/remotes/origin/HEAD'));
     menu = screen.getByRole('menu', { name: 'ref actions' });
     expect(within(menu).queryByRole('menuitem', { name: 'Checkout as New Local…' })).not.toBeInTheDocument();
+    expect(within(menu).queryByRole('menuitem', { name: 'Checkout (Detached HEAD)' })).not.toBeInTheDocument();
     expect(within(menu).queryByRole('menuitem', { name: 'Delete Remote Branch…' })).not.toBeInTheDocument();
 
     fireEvent.contextMenu(screen.getByTitle('refs/tags/v1'));

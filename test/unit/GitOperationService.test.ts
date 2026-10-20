@@ -5,7 +5,7 @@ import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { GitRunner as RealGitRunner } from '../../src/git/GitRunner';
+import { GitCommandError, GitRunner as RealGitRunner } from '../../src/git/GitRunner';
 import type { GitRunOptions, GitRunResult, GitRunner } from '../../src/git/GitRunner';
 import type { GitOperationRequest } from '../../src/protocol/messages';
 import type { RepositorySummary } from '../../src/shared/models';
@@ -80,6 +80,130 @@ async function commitFile(cwd: string, name: string, content: string, message: s
 }
 
 describe('GitOperationService', () => {
+  async function createPushFixture() {
+    const fixture = await createFixtureRepository('git-operation-push-head-');
+    const remote = await mkdtemp(join(tmpdir(), 'git-operation-push-head-remote-'));
+    temporaryDirectories.push(remote);
+    await git(remote, 'init', '--bare');
+    await git(fixture.path, 'remote', 'add', 'origin', remote);
+    await git(fixture.path, 'push', 'origin', 'main');
+    await git(fixture.path, 'switch', '--detach', 'HEAD');
+    return { ...fixture, remote, service: new (await import('../../src/git/GitOperationService')).GitOperationService(new RealGitRunner()) };
+  }
+
+  it('pushes detached HEAD to a new remote branch without creating a local branch or pushing tags', async () => {
+    const fixture = await createPushFixture();
+    const mainTip = await git(fixture.path, 'rev-parse', 'main');
+    const head = await commitFile(fixture.path, 'work.txt', 'work\n', 'detached work');
+    await git(fixture.path, 'tag', '-a', 'private-tag', '-m', 'local tag');
+    await git(fixture.path, 'config', 'push.followTags', 'true');
+    await fixture.service.run(fixture.summary, { kind: 'pushHead', remote: 'origin', branch: 'feature/work' });
+    expect(await git(fixture.remote, 'rev-parse', 'refs/heads/feature/work')).toBe(head);
+    expect(await git(fixture.remote, 'rev-parse', 'refs/heads/main')).toBe(mainTip);
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('');
+    expect(await git(fixture.path, 'for-each-ref', '--format=%(refname)', 'refs/heads')).toBe('refs/heads/main');
+    expect(await git(fixture.remote, 'for-each-ref', '--format=%(refname)', 'refs/tags')).toBe('');
+  });
+
+  it('fast-forwards an existing remote branch from detached HEAD', async () => {
+    const fixture = await createPushFixture();
+    const head = await commitFile(fixture.path, 'work.txt', 'work\n', 'detached work');
+    await fixture.service.run(fixture.summary, { kind: 'pushHead', remote: 'origin', branch: 'main' });
+    expect(await git(fixture.remote, 'rev-parse', 'refs/heads/main')).toBe(head);
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('');
+  });
+
+  it('rejects a non-fast-forward HEAD push without replacing remote history', async () => {
+    const fixture = await createPushFixture();
+    const base = await git(fixture.path, 'rev-parse', 'HEAD');
+    const remoteTip = await commitFile(fixture.path, 'remote.txt', 'remote\n', 'remote work');
+    await git(fixture.path, 'push', 'origin', 'HEAD:main');
+    await git(fixture.path, 'switch', '--detach', base);
+    await commitFile(fixture.path, 'local.txt', 'local\n', 'divergent work');
+    await expect(fixture.service.run(fixture.summary, { kind: 'pushHead', remote: 'origin', branch: 'main' }))
+      .rejects.toBeInstanceOf(GitCommandError);
+    expect(await git(fixture.remote, 'rev-parse', 'refs/heads/main')).toBe(remoteTip);
+  });
+
+  it('rejects unconfigured remotes and malformed branch destinations before pushing', async () => {
+    const fixture = await createPushFixture();
+    const run = vi.spyOn(RealGitRunner.prototype, 'run');
+    try {
+      for (const operation of [
+        { kind: 'pushHead' as const, remote: fixture.remote, branch: 'main' },
+        { kind: 'pushHead' as const, remote: 'origin', branch: 'main:refs/heads/other' },
+      ]) {
+        await expect(fixture.service.run(fixture.summary, operation)).rejects.toThrow();
+      }
+      expect(run.mock.calls.some(([args]) => args[0] === 'push')).toBe(false);
+    } finally {
+      run.mockRestore();
+    }
+  });
+
+  it('checks out a remote ref detached and switches back without creating a branch', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository();
+    const base = await git(fixture.path, 'rev-parse', 'HEAD');
+    await git(fixture.path, 'update-ref', 'refs/remotes/origin/topic', base);
+    const mainTip = await commitFile(fixture.path, 'main.txt', 'main\n', 'main only');
+    const branches = await git(fixture.path, 'for-each-ref', '--format=%(refname)', 'refs/heads');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(fixture.summary, { kind: 'checkoutDetached', ref: 'refs/remotes/origin/topic' });
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('');
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).toBe(base);
+    expect(await git(fixture.path, 'for-each-ref', '--format=%(refname)', 'refs/heads')).toBe(branches);
+
+    await service.run(fixture.summary, { kind: 'switchPrevious' });
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('main');
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).toBe(mainTip);
+  });
+
+  it('creates and checks out a branch preserving new detached HEAD commits', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository();
+    const mainTip = await git(fixture.path, 'rev-parse', 'HEAD');
+    await git(fixture.path, 'switch', '--detach', 'HEAD');
+    const detachedTip = await commitFile(fixture.path, 'detached.txt', 'work\n', 'detached work');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await service.run(fixture.summary, { kind: 'createAndCheckoutBranch', name: 'feature/saved' });
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('feature/saved');
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).toBe(detachedTip);
+    expect(await git(fixture.path, 'rev-parse', 'main')).toBe(mainTip);
+  });
+
+  it('does not overwrite an existing branch when saving detached HEAD', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository();
+    const mainTip = await git(fixture.path, 'rev-parse', 'main');
+    await git(fixture.path, 'switch', '--detach', 'HEAD');
+    const detachedTip = await commitFile(fixture.path, 'detached.txt', 'work\n', 'detached work');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await expect(service.run(fixture.summary, { kind: 'createAndCheckoutBranch', name: 'main' }))
+      .rejects.toBeInstanceOf(GitCommandError);
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('');
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).toBe(detachedTip);
+    expect(await git(fixture.path, 'rev-parse', 'main')).toBe(mainTip);
+  });
+
+  it('leaves conflicting uncommitted changes intact when switching back fails', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository();
+    const base = await git(fixture.path, 'rev-parse', 'HEAD');
+    await commitFile(fixture.path, 'base.txt', 'main change\n', 'main change');
+    await git(fixture.path, 'switch', '--detach', base);
+    await writeFile(join(fixture.path, 'base.txt'), 'unsaved work\n');
+    const service = new GitOperationService(new RealGitRunner());
+
+    await expect(service.run(fixture.summary, { kind: 'switchPrevious' }))
+      .rejects.toBeInstanceOf(GitCommandError);
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('');
+    expect(await git(fixture.path, 'diff', '--', 'base.txt')).toContain('+unsaved work');
+  });
+
   it('maps stash and Amend HEAD requests to safe Git arguments', async () => {
     const { buildOperationArguments } = await import('../../src/git/GitOperationService');
 

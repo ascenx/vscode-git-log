@@ -48,6 +48,47 @@ async function createRepository(): Promise<string> {
 }
 
 describe('WorkbenchController', () => {
+  it('lists configured push remotes without fetched refs and refreshes after pushing detached HEAD', async () => {
+    const repository = await createRepository();
+    const remote = await mkdtemp(join(tmpdir(), 'git-log-push-head-remote-'));
+    temporaryDirectories.push(remote);
+    await execFileAsync('git', ['init', '--bare', remote]);
+    await execFileAsync('git', ['remote', 'add', 'origin', remote], { cwd: repository });
+    await execFileAsync('git', ['remote', 'add', 'team/origin', remote], { cwd: repository });
+    await execFileAsync('git', ['switch', '--detach', 'HEAD'], { cwd: repository });
+    const runner = new GitRunner();
+    const messages: ExtensionToWebviewMessage[] = [];
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository], gitService: new GitService(runner), gitRunner: runner,
+      operationService: new GitOperationService(runner), scanDepth: 0,
+      initialPageSize: 200, pageSize: 500,
+      initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+      postMessage(message) { messages.push(message); return Promise.resolve(true); },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-push-head' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (initialized?.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+    const repositoryId = initialized.selectedRepositoryId;
+    await controller.handleMessage({ type: 'requestPushHeadTargets', requestId: 'targets', repositoryId });
+    expect(messages).toContainEqual({
+      type: 'pushHeadTargetsLoaded', requestId: 'targets', repositoryId,
+      remotes: ['origin', 'team/origin'],
+    });
+    await controller.handleMessage({
+      type: 'runOperation', requestId: 'push-head', repositoryId,
+      operation: { kind: 'pushHead', remote: 'team/origin', branch: 'feature/new' },
+    });
+    const head = (await execFileAsync('git', ['rev-parse', 'HEAD'], { cwd: repository })).stdout.trim();
+    expect((await execFileAsync('git', ['rev-parse', 'refs/heads/feature/new'], { cwd: remote })).stdout.trim()).toBe(head);
+    expect(messages).toContainEqual(expect.objectContaining({ type: 'operationCompleted', requestId: 'push-head' }));
+    expect(messages.filter((message) => message.type === 'repositoryData').at(-1)).toMatchObject({
+      refs: expect.arrayContaining([expect.objectContaining({ fullName: 'refs/remotes/team/origin/feature/new', target: head })]),
+    });
+    expect((await execFileAsync('git', ['branch', '--show-current'], { cwd: repository })).stdout.trim()).toBe('');
+  });
+
   it('keeps a newly opened folder history when repository initialization finishes later', async () => {
     const repository = await createRepository();
     await mkdir(join(repository, 'src'));
@@ -2882,6 +2923,90 @@ describe('WorkbenchController', () => {
         expect.objectContaining({ id: first.id, currentBranch: 'feature' }),
       ]),
     });
+  });
+
+  it('follows detached HEAD commits and refreshes after switching back or saving a branch', async () => {
+    const repository = await createRepository();
+    const git = async (...args: string[]) => (await execFileAsync('git', args, {
+      cwd: repository,
+      env: {
+        ...process.env, GIT_AUTHOR_NAME: 'Alice', GIT_AUTHOR_EMAIL: 'alice@example.com',
+        GIT_COMMITTER_NAME: 'Alice', GIT_COMMITTER_EMAIL: 'alice@example.com',
+      },
+    })).stdout.trim();
+    await git('remote', 'add', 'origin', repository);
+    await git('switch', '-c', 'topic');
+    await writeFile(join(repository, 'topic.txt'), 'topic\n');
+    await git('add', 'topic.txt');
+    await git('commit', '-m', 'remote topic');
+    const remoteTip = await git('rev-parse', 'HEAD');
+    const remoteRef = 'refs/remotes/origin/topic';
+    await git('update-ref', remoteRef, remoteTip);
+    await git('switch', 'main');
+    const mainTip = await git('rev-parse', 'HEAD');
+    const messages: ExtensionToWebviewMessage[] = [];
+    const runner = new GitRunner();
+    const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
+      workspaceRoots: [repository], gitService: new GitService(runner), gitRunner: runner,
+      operationService: new GitOperationService(runner), scanDepth: 0,
+      initialPageSize: 200, pageSize: 500,
+      initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+      postMessage(message) { messages.push(message); return Promise.resolve(true); },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready-detached' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    expect(initialized?.type).toBe('initialize');
+    if (initialized?.type !== 'initialize' || !initialized.selectedRepositoryId) return;
+    const repositoryId = initialized.selectedRepositoryId;
+    const filterRemote = () => controller.handleMessage({
+      type: 'updateFilters', requestId: 'filter-remote', repositoryId,
+      filters: { text: '', branches: [remoteRef], authors: [], paths: [] },
+    });
+    const run = (requestId: string, operation: GitOperationRequest) => controller.handleMessage({
+      type: 'runOperation', requestId, repositoryId, operation,
+    });
+    const latestRepository = () => messages.filter((message) => message.type === 'repositoriesUpdated')
+      .at(-1)?.repositories.find((candidate) => candidate.id === repositoryId);
+    const latestLog = () => messages.filter((message) => message.type === 'repositoryData').at(-1);
+
+    await filterRemote();
+    expect(latestLog()?.filters.branches).toEqual([remoteRef]);
+    await run('detach', { kind: 'checkoutDetached', ref: remoteRef });
+    expect(latestRepository()?.currentBranch).toBeUndefined();
+    expect(latestRepository()?.head).toBe(remoteTip);
+    expect(latestLog()?.filters.branches).toEqual([]);
+    expect(latestLog()?.selectedHash).toBe(remoteTip);
+
+    await writeFile(join(repository, 'detached.txt'), 'detached\n');
+    await git('add', 'detached.txt');
+    await git('commit', '-m', 'new detached commit');
+    const detachedTip = await git('rev-parse', 'HEAD');
+    await controller.handleMessage({ type: 'refresh', requestId: 'external-detached-commit', repositoryId });
+    expect(latestLog()?.commits[0]?.hash).toBe(detachedTip);
+    expect(latestLog()?.selectedHash).toBe(detachedTip);
+
+    await filterRemote();
+    await run('switch-back', { kind: 'switchPrevious' });
+    expect(latestRepository()).toMatchObject({ currentBranch: 'main', head: mainTip });
+    expect(latestLog()?.filters.branches).toEqual([]);
+    expect(latestLog()?.commits[0]?.hash).toBe(mainTip);
+
+    await run('detach-again', { kind: 'checkoutDetached', ref: detachedTip });
+    await filterRemote();
+    await controller.handleMessage({
+      type: 'selectCommit', requestId: 'select-old-commit', repositoryId, hash: mainTip,
+    });
+    await controller.handleMessage({
+      type: 'updateScrollAnchor', requestId: 'scroll-before-save', repositoryId,
+      scrollTop: 84, logOffset: 1,
+    });
+    await run('save-detached', { kind: 'createAndCheckoutBranch', name: 'saved-work' });
+    expect(latestRepository()).toMatchObject({ currentBranch: 'saved-work', head: detachedTip });
+    expect(latestLog()?.filters.branches).toEqual([]);
+    expect(latestLog()?.commits[0]?.hash).toBe(detachedTip);
+    expect(latestLog()).toMatchObject({ selectedHash: detachedTip, scrollTop: 0, startLogOffset: 0 });
+    expect(messages.filter((message) => message.type === 'error')).toEqual([]);
   });
 
   it('re-inspects the repository and follows the new HEAD after checkout', async () => {

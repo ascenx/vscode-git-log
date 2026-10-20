@@ -1,6 +1,52 @@
 import { describe, expect, it } from 'vitest';
 
 describe('parseWebviewMessage', () => {
+  it('validates explicit HEAD pushes and push target requests', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const request = (operation: Record<string, unknown>) => parseWebviewMessage({
+      type: 'runOperation', requestId: 'push-head', repositoryId: 'repo', operation,
+    });
+    const operation = { kind: 'pushHead', remote: 'origin', branch: 'feature/work' };
+    expect(request(operation)).toMatchObject({ operation });
+    for (const invalid of [
+      { ...operation, remote: '--all' }, { ...operation, remote: '' },
+      { ...operation, branch: '' }, { ...operation, branch: 'refs/tags/v1' },
+      { ...operation, branch: 'main:refs/heads/other' },
+      { ...operation, branch: 'bad branch' }, { ...operation, branch: 'main\nother' },
+      { kind: 'pushHead', remote: 'origin' },
+    ]) {
+      expect(request(invalid)).toBeUndefined();
+    }
+    expect(parseWebviewMessage({
+      type: 'requestPushHeadTargets', requestId: 'targets', repositoryId: 'repo',
+    })).toMatchObject({ type: 'requestPushHeadTargets', repositoryId: 'repo' });
+    expect(parseWebviewMessage({ type: 'requestPushHeadTargets', requestId: 'targets' })).toBeUndefined();
+  });
+
+  it('validates detached checkout, switching back and creating a checked-out branch', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const request = (operation: Record<string, unknown>) => parseWebviewMessage({
+      type: 'runOperation', requestId: 'detached', repositoryId: 'repo', operation,
+    });
+    for (const operation of [
+      { kind: 'checkoutDetached', ref: 'refs/remotes/origin/main' },
+      { kind: 'switchPrevious' },
+      { kind: 'createAndCheckoutBranch', name: 'feature/from-head' },
+    ]) {
+      expect(request(operation)).toMatchObject({ operation });
+    }
+    for (const operation of [
+      { kind: 'checkoutDetached', ref: '--discard-changes' },
+      { kind: 'checkoutDetached', ref: 'main\nother' },
+      { kind: 'checkoutDetached' },
+      { kind: 'createAndCheckoutBranch', name: '-C' },
+      { kind: 'createAndCheckoutBranch', name: 'feature..bad' },
+      { kind: 'createAndCheckoutBranch', name: '' },
+    ]) {
+      expect(request(operation)).toBeUndefined();
+    }
+  });
+
   it('validates stash management and Amend HEAD requests', async () => {
     const { parseWebviewMessage } = await import('../../src/protocol/messages');
     const operation = (value: Record<string, unknown>) =>

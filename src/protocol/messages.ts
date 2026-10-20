@@ -93,6 +93,7 @@ export type WebviewToExtensionMessage =
   | { type: 'closeHistory'; requestId: string; repositoryId: string }
   | { type: 'closeFolderHistory'; requestId: string; repositoryId: string }
   | { type: 'requestStashState'; requestId: string; repositoryId: string }
+  | { type: 'requestPushHeadTargets'; requestId: string; repositoryId: string }
   | { type: 'openStashComparison'; requestId: string; repositoryId: string; hash: string }
   | { type: 'refresh'; requestId: string; repositoryId?: string }
   | { type: 'showOutput'; requestId: string }
@@ -141,6 +142,9 @@ export type WebviewToExtensionMessage =
 
 export type GitOperationRequest =
   | { kind: 'checkout'; ref: string }
+  | { kind: 'checkoutDetached'; ref: string }
+  | { kind: 'switchPrevious' }
+  | { kind: 'createAndCheckoutBranch'; name: string }
   | { kind: 'createBranch'; name: string; startPoint: string }
   | { kind: 'createTag'; name: string; target: string }
   | { kind: 'deleteTag'; name: string }
@@ -149,6 +153,7 @@ export type GitOperationRequest =
   | { kind: 'fetch'; remote?: string }
   | { kind: 'pull' }
   | { kind: 'push'; forceWithLease?: boolean; remote?: string; targetRef?: string }
+  | { kind: 'pushHead'; remote: string; branch: string }
   | { kind: 'cherryPick'; hash: string }
   | { kind: 'revert'; hash: string }
   | { kind: 'merge'; ref: string }
@@ -250,6 +255,7 @@ export type ExtensionToWebviewMessage =
   | { type: 'operationCompleted'; requestId: string; repositoryId: string; message: string }
   | { type: 'operationCancelled'; requestId: string; repositoryId: string }
   | { type: 'clipboardCopied'; requestId: string }
+  | { type: 'pushHeadTargetsLoaded'; requestId: string; repositoryId: string; remotes: string[] }
   | {
       type: 'stashStateLoaded';
       requestId: string;
@@ -482,7 +488,12 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
   if (!isRecord(value) || typeof value.kind !== 'string') return false;
   switch (value.kind) {
     case 'checkout':
+    case 'checkoutDetached':
       return isSafeGitToken(value.ref);
+    case 'switchPrevious':
+      return true;
+    case 'createAndCheckoutBranch':
+      return isGitRefName(value.name);
     case 'createBranch':
       return isGitRefName(value.name) && isSafeGitToken(value.startPoint);
     case 'createTag':
@@ -497,6 +508,8 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
       return value.remote === undefined || isSafeGitToken(value.remote);
     case 'pull':
       return true;
+    case 'pushHead':
+      return isSafeGitToken(value.remote) && isRemoteBranchName(value.branch);
     case 'push':
       return (
         (value.forceWithLease === undefined || typeof value.forceWithLease === 'boolean') &&
@@ -647,6 +660,7 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
           }
         : undefined;
     case 'requestStashState':
+    case 'requestPushHeadTargets':
       return hasRepository(value)
         ? { type: value.type, requestId: value.requestId, repositoryId: value.repositoryId }
         : undefined;

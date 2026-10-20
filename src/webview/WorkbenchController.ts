@@ -363,6 +363,19 @@ export class WorkbenchController {
         case 'closeFolderHistory':
           await this.closeFolderHistory(message.requestId, message.repositoryId);
           break;
+        case 'requestPushHeadTargets': {
+          this.requireSelectedRepository(message.repositoryId);
+          const repository = this.requireRepository(message.repositoryId);
+          const result = await this.options.gitRunner.run(['remote'], {
+            cwd: fileURLToPath(repository.rootUri), timeoutMs: 30_000,
+          });
+          await this.options.postMessage({
+            type: 'pushHeadTargetsLoaded', requestId: message.requestId,
+            repositoryId: message.repositoryId,
+            remotes: result.stdout.toString('utf8').split(/\r?\n/u).filter(Boolean),
+          });
+          break;
+        }
         case 'requestStashState': {
           this.requireSelectedRepository(message.repositoryId);
           const repository = this.requireRepository(message.repositoryId);
@@ -950,7 +963,7 @@ export class WorkbenchController {
     }
   }
 
-  private async refresh(requestId: string, repositoryId?: string): Promise<void> {
+  private async refresh(requestId: string, repositoryId?: string, followHead = false): Promise<void> {
     if (!repositoryId) {
       await this.initialize(requestId);
       return;
@@ -969,7 +982,7 @@ export class WorkbenchController {
       if (this.selectedRepositoryId === repositoryId) {
         this.selectedRepositoryId = effectiveRepositoryId;
       }
-      if (headChanged) {
+      if (headChanged || followHead) {
         this.selectionRequestSequence += 1;
         this.selectionAbortController?.abort();
         this.scrollTops.set(effectiveRepositoryId, 0);
@@ -997,7 +1010,7 @@ export class WorkbenchController {
       effectiveRepositoryId,
       requestId,
       true,
-      headChanged ? 0 : (this.logOffsets.get(effectiveRepositoryId) ?? 0),
+      headChanged || followHead ? 0 : (this.logOffsets.get(effectiveRepositoryId) ?? 0),
       logSequence,
     );
   }
@@ -1272,6 +1285,18 @@ export class WorkbenchController {
     } catch (error) {
       operationError = error;
     } finally {
+      const followHead = Boolean(result && !result.cancelled && (
+        operation.kind === 'checkoutDetached' ||
+        operation.kind === 'switchPrevious' ||
+        operation.kind === 'createAndCheckoutBranch'
+      ));
+      if (followHead) {
+        const filters = this.filters.get(repository.id);
+        if (filters?.branches.length) {
+          this.filters.set(repository.id, { ...filters, branches: [] });
+          await this.persistWorkbenchState();
+        }
+      }
       const deletedRef =
         result && !result.cancelled
           ? operation.kind === 'deleteBranch'
@@ -1308,9 +1333,11 @@ export class WorkbenchController {
             ? this.repositories.get(this.selectedRepositoryId)
             : undefined;
           if (selectedRepository && this.getOperationGroup(selectedRepository) === operationGroup) {
-            await this.refresh(`${message.requestId}-refresh`, selectedRepository.id).catch(
-              ignoreRefreshCancellation,
-            );
+            await this.refresh(
+              `${message.requestId}-refresh`,
+              selectedRepository.id,
+              followHead && selectedRepository.id === repository.id,
+            ).catch(ignoreRefreshCancellation);
             const repositoriesInGroup = [...this.repositories.values()].filter(
               (candidate) => this.getOperationGroup(candidate) === operationGroup,
             );

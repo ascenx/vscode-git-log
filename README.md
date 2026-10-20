@@ -72,6 +72,8 @@ code --install-extension ascenx.git-log
 The current version covers Milestones 0–6 and the editor history work from Milestone 7:
 
 - Multi-root repository discovery for standard repositories, bare repositories, linked worktrees, and detached HEAD states. Repository refreshes reuse unchanged Git metadata watchers, including shared watchers for linked worktrees.
+- Remote branch menus offer `Checkout (Detached HEAD)` without creating a local branch. While detached, the HEAD menu provides `Switch Back` (`git switch -`) and `Create Branch and Checkout…` (`git switch -c <name>`). These operations reset the Branch filter to follow HEAD, including subsequent local commits.
+- While detached, `Push HEAD…` in the HEAD menu and toolbar's More actions lets you choose a configured remote and enter an existing or new destination branch. It pushes `HEAD:refs/heads/<branch>` without creating a local branch; non-fast-forward updates are rejected by Git.
 - Synchronized Refs, Commit Graph, Changed Files, and Commit Details areas.
 - A dedicated Branch pane search and a recursive, collapsible reference tree that groups slash-delimited Local, Remote, and Tag names into folders. Remote names containing `/` remain distinct top-level folders.
 - A dedicated `Git Log` tab in the VS Code bottom Panel alongside Problems, Output, and Terminal. `Open Log` focuses this tab directly without opening an editor page or intermediate welcome view.

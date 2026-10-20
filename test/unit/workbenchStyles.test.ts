@@ -192,9 +192,11 @@ describe('workbench styles', () => {
     expect(app).toContain('className="stash-create-actions"');
     expect(app).toContain('className="stash-checkbox"');
     expect(app).toContain('className="stash-submit-button"');
-    expect(styles).toMatch(
-      /\.operation-dialog input:not\(\[type='checkbox'\]\),\s*\n\.operation-dialog textarea\s*\{/su,
-    );
+    const dialogControls = styles.match(/([^{}]*\.operation-dialog input[^{}]*)\{/u)?.[1]
+      ?.split(',').map((selector) => selector.trim());
+    expect(dialogControls).toContain(".operation-dialog input:not([type='checkbox'])");
+    expect(dialogControls).toContain('.operation-dialog textarea');
+    expect(dialogControls).not.toContain('.operation-dialog input');
     expect(styles).toMatch(
       /\.stash-create-actions\s*\{[^}]*display:\s*flex;[^}]*align-items:\s*center;[^}]*justify-content:\s*space-between;[^}]*flex-wrap:\s*wrap;/su,
     );

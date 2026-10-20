@@ -6,4 +6,5 @@ coverage/
 .DS_Store
 .vscode-test/
 .worktrees/
+/docs/
 *.log

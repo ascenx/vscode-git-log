@@ -64,6 +64,12 @@ export function buildOperationArguments(
   switch (operation.kind) {
     case 'checkout':
       return ['checkout', validateToken(operation.ref, 'revision'), '--'];
+    case 'checkoutDetached':
+      return ['switch', '--detach', validateToken(operation.ref, 'revision')];
+    case 'switchPrevious':
+      return ['switch', '-'];
+    case 'createAndCheckoutBranch':
+      return ['switch', '-c', validateToken(operation.name, 'branch name')];
     case 'createBranch':
       return [
         'branch',
@@ -101,6 +107,13 @@ export function buildOperationArguments(
         : ['fetch', '--all', '--prune'];
     case 'pull':
       return ['pull'];
+    case 'pushHead':
+      return [
+        'push',
+        '--no-follow-tags',
+        validateToken(operation.remote, 'push remote'),
+        `HEAD:refs/heads/${validateToken(operation.branch, 'push branch')}`,
+      ];
     case 'push':
       if (operation.forceWithLease) {
         if (!operation.remote || !operation.targetRef || !forceSourceHash) {
@@ -435,6 +448,17 @@ export class GitOperationService {
         }
         if (operation.kind === 'deleteRemoteBranch') {
           await this.validateRemoteBranchDeletion(freshRepository, operation.remote, operation.branch);
+        }
+        if (operation.kind === 'pushHead') {
+          const cwd = fileURLToPath(freshRepository.rootUri);
+          const remote = validateToken(operation.remote, 'push remote');
+          const branch = validateToken(operation.branch, 'push branch');
+          const configured = await this.runner.run(['remote'], { cwd, timeoutMs: 30_000 });
+          if (!configured.stdout.toString('utf8').split(/\r?\n/u).includes(remote)) {
+            throw new Error(`Remote “${remote}” is not a configured remote.`);
+          }
+          if (branch.startsWith('refs/')) throw new Error('Enter a branch name without the refs/ prefix.');
+          await this.runner.run(['check-ref-format', `refs/heads/${branch}`], { cwd, timeoutMs: 30_000 });
         }
         let rewritePlan: CommitRangeRewritePlan | undefined;
         if (operation.kind === 'dropCommits' || operation.kind === 'squashCommits') {
