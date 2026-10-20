@@ -1756,6 +1756,146 @@ describe('WorkbenchController', () => {
     });
   });
 
+  it.each([
+    { outcome: 'completed', refreshTarget: 'log' },
+    { outcome: 'failed', refreshTarget: 'log' },
+    { outcome: 'cancelled', refreshTarget: 'log' },
+    { outcome: 'completed', refreshTarget: 'history' },
+  ] as const)(
+    'reports a $outcome operation when its $refreshTarget refresh is interrupted',
+    async ({ outcome, refreshTarget }) => {
+      const repository = await createRepository();
+      const messages: ExtensionToWebviewMessage[] = [];
+      const runner = new GitRunner();
+      const gitService = new GitService(runner);
+      const fileHistoryService = new FileHistoryService(runner);
+      const controller = new (
+        await import('../../src/webview/WorkbenchController')
+      ).WorkbenchController({
+        workspaceRoots: [repository],
+        gitService,
+        fileHistoryService,
+        gitRunner: runner,
+        operationService: {
+          async run() {
+            if (outcome === 'failed') throw new Error('Operation failed before refresh.');
+            if (outcome === 'cancelled')
+              throw new GitCommandError(
+                'Git command was cancelled.',
+                ['fetch'],
+                repository,
+                null,
+                Buffer.alloc(0),
+                Buffer.alloc(0),
+                true,
+                false,
+              );
+            return { message: 'fetch completed.' };
+          },
+        } as never,
+        scanDepth: 0,
+        initialPageSize: 200,
+        pageSize: 500,
+        initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+        postMessage(message) {
+          messages.push(message);
+          return Promise.resolve(true);
+        },
+        persistLayout: () => Promise.resolve(),
+      });
+      await controller.handleMessage({ type: 'ready', requestId: 'ready-interrupted-operation' });
+      const initialized = messages.find((message) => message.type === 'initialize');
+      expect(initialized?.selectedRepositoryId).toBeDefined();
+      const repositoryId = initialized!.selectedRepositoryId!;
+      if (refreshTarget === 'history') {
+        await controller.openEditorHistory({
+          kind: 'file',
+          repository: initialized!.repositories[0]!,
+          path: 'app.txt',
+        });
+      }
+      let signalRefreshStarted: (() => void) | undefined;
+      const refreshStarted = new Promise<void>((resolve) => {
+        signalRefreshStarted = resolve;
+      });
+      const waitForCancellation = (signal?: AbortSignal): Promise<never> => {
+        signalRefreshStarted?.();
+        return new Promise((_resolve, reject) => {
+          signal?.addEventListener(
+            'abort',
+            () =>
+              reject(
+                new GitCommandError(
+                  'Git command was cancelled.',
+                  ['log'],
+                  repository,
+                  null,
+                  Buffer.alloc(0),
+                  Buffer.alloc(0),
+                  true,
+                  false,
+                ),
+              ),
+            { once: true },
+          );
+        });
+      };
+      if (refreshTarget === 'log') {
+        vi.spyOn(gitService, 'getLog').mockImplementationOnce((_cwd, query) =>
+          waitForCancellation(query.signal),
+        );
+      } else {
+        vi.spyOn(fileHistoryService, 'getFileHistory').mockImplementationOnce(
+          (_cwd, _path, _refs, page) => waitForCancellation(page.signal),
+        );
+      }
+
+      const operation = controller.handleMessage({
+        type: 'runOperation',
+        requestId: 'interrupted-operation',
+        repositoryId,
+        operation: { kind: 'fetch' },
+      });
+      await refreshStarted;
+      if (refreshTarget === 'log') {
+        await controller.handleMessage({
+          type: 'updateFilters',
+          requestId: 'superseding-filter',
+          repositoryId,
+          filters: { text: 'hello', branches: [], authors: [], paths: [] },
+        });
+      } else {
+        await controller.handleMessage({
+          type: 'closeHistory',
+          requestId: 'close-history',
+          repositoryId,
+        });
+      }
+      await operation;
+
+      expect(messages).toContainEqual(
+        expect.objectContaining({
+          type: refreshTarget === 'log' ? 'repositoryData' : 'historyClosed',
+          requestId: refreshTarget === 'log' ? 'superseding-filter' : 'close-history',
+          repositoryId,
+        }),
+      );
+      expect(
+        messages.filter(
+          (message) => message.requestId === 'interrupted-operation' && message.type !== 'loading',
+        ),
+      ).toEqual([
+        expect.objectContaining(
+          outcome === 'completed'
+            ? { type: 'operationCompleted', repositoryId, message: 'fetch completed.' }
+            : outcome === 'cancelled'
+              ? { type: 'operationCancelled', repositoryId }
+              : { type: 'error', repositoryId, message: 'Operation failed before refresh.' },
+        ),
+      ]);
+    },
+  );
+
   it('offers force deletion when a normal branch deletion fails because it is not merged', async () => {
     const repository = await createRepository();
     const messages: ExtensionToWebviewMessage[] = [];

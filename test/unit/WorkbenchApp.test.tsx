@@ -1391,6 +1391,66 @@ describe('WorkbenchApp', () => {
     expect(fetchButton).toBeEnabled();
   });
 
+  it.each(['operationCompleted', 'operationCancelled', 'error'] as const)(
+    'allows branch deletion from an open menu after %s',
+    (terminalType) => {
+      const { commits, middle } = initializeCommitRangeFixture();
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'repositoryData',
+              requestId: 'ready-commit-range',
+              repositoryId: 'repo-commit-range',
+              refs: [
+                {
+                  fullName: 'refs/heads/feature',
+                  shortName: 'feature',
+                  kind: 'local',
+                  target: middle,
+                  ahead: 0,
+                  behind: 0,
+                  isCurrent: false,
+                },
+              ],
+              commits,
+              filters: { text: '', branches: [], authors: [], paths: [] },
+              replace: true,
+              hasMore: false,
+            },
+          }),
+        );
+      });
+      fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+      const operation = postedMessages.find((message) => message.type === 'runOperation');
+      expect(operation?.type).toBe('runOperation');
+      if (!operation || operation.type !== 'runOperation') return;
+
+      fireEvent.contextMenu(screen.getByTitle('refs/heads/feature'));
+      const menu = screen.getByRole('menu', { name: 'ref actions' });
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: terminalType,
+              requestId: operation.requestId,
+              repositoryId: operation.repositoryId,
+              message: terminalType === 'error' ? 'Fetch failed.' : 'Fetch completed.',
+            },
+          }),
+        );
+      });
+      expect(screen.queryByText('Running Git operation…')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'Fetch remotes' })).toBeEnabled();
+      fireEvent.click(within(menu).getByRole('menuitem', { name: 'Delete…' }));
+      expect(postedMessages.at(-1)).toMatchObject({
+        type: 'runOperation',
+        repositoryId: operation.repositoryId,
+        operation: { kind: 'deleteBranch', name: 'feature', force: false },
+      });
+    },
+  );
+
   it('rejects an invalid named operation before acquiring the repository operation lock', () => {
     render(<App />);
     const hash = 'a'.repeat(40);

@@ -444,7 +444,16 @@ export class WorkbenchController {
             ? this.selectedRepositoryId
             : undefined;
       if (error instanceof GitCommandError) {
-        if (error.cancelled) return;
+        if (error.cancelled) {
+          if (message.type === 'runOperation') {
+            await this.options.postMessage({
+              type: 'operationCancelled',
+              requestId: message.requestId,
+              repositoryId: message.repositoryId,
+            });
+          }
+          return;
+        }
         const classified = classifyGitError(error);
         const recovery: ErrorRecoveryAction | undefined =
           message.type === 'runOperation' &&
@@ -1206,6 +1215,10 @@ export class WorkbenchController {
         },
       }) ??
       Promise.reject(new Error('Git operations are not available.'));
+    const ignoreRefreshCancellation = (error: unknown): void => {
+      // A superseding read must not discard the write operation's terminal response.
+      if (!(error instanceof GitCommandError && error.cancelled)) throw error;
+    };
 
     const operationGroup = this.getOperationGroup(repository);
     this.activeOperationGroups.set(
@@ -1257,7 +1270,9 @@ export class WorkbenchController {
             ? this.repositories.get(this.selectedRepositoryId)
             : undefined;
           if (selectedRepository && this.getOperationGroup(selectedRepository) === operationGroup) {
-            await this.refresh(`${message.requestId}-refresh`, selectedRepository.id);
+            await this.refresh(`${message.requestId}-refresh`, selectedRepository.id).catch(
+              ignoreRefreshCancellation,
+            );
             const repositoriesInGroup = [...this.repositories.values()].filter(
               (candidate) => this.getOperationGroup(candidate) === operationGroup,
             );
@@ -1281,7 +1296,9 @@ export class WorkbenchController {
             this.options.fileHistoryService?.invalidate(
               fileURLToPath(activeHistory.request.repository.rootUri),
             );
-            await this.loadEditorHistoryPage(`${message.requestId}-history-refresh`, 0, true);
+            await this.loadEditorHistoryPage(`${message.requestId}-history-refresh`, 0, true).catch(
+              ignoreRefreshCancellation,
+            );
           }
         }
       }
