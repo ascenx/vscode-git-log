@@ -1451,6 +1451,62 @@ describe('WorkbenchApp', () => {
     },
   );
 
+  it.each(['operationCompleted', 'operationCancelled', 'error'] as const)(
+    'preserves an operation across workspace reinitialization until %s',
+    (terminalType) => {
+      const { newest } = initializeCommitRangeFixture();
+      const fetchButton = screen.getByRole('button', { name: 'Fetch remotes' });
+      fireEvent.click(fetchButton);
+      const operation = postedMessages.find((message) => message.type === 'runOperation');
+      expect(operation?.type).toBe('runOperation');
+      if (!operation || operation.type !== 'runOperation') return;
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: 'initialize',
+              requestId: 'workspace-refresh',
+              repositories: [
+                {
+                  id: operation.repositoryId,
+                  rootUri: 'file:///workspace/commit-range',
+                  gitDirUri: 'file:///workspace/commit-range/.git',
+                  displayName: 'commit-range',
+                  isBare: false,
+                  currentBranch: 'main',
+                  head: newest,
+                },
+              ],
+              selectedRepositoryId: operation.repositoryId,
+              pageSize: 500,
+              layout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+            },
+          }),
+        );
+      });
+      expect(fetchButton).toBeDisabled();
+      fireEvent.click(fetchButton);
+      expect(postedMessages.filter((message) => message.type === 'runOperation')).toHaveLength(1);
+
+      act(() => {
+        window.dispatchEvent(
+          new MessageEvent('message', {
+            data: {
+              type: terminalType,
+              requestId: operation.requestId,
+              repositoryId: operation.repositoryId,
+              message: 'Operation ended.',
+            },
+          }),
+        );
+      });
+      expect(fetchButton).toBeEnabled();
+      fireEvent.click(fetchButton);
+      expect(postedMessages.filter((message) => message.type === 'runOperation')).toHaveLength(2);
+    },
+  );
+
   it('rejects an invalid named operation before acquiring the repository operation lock', () => {
     render(<App />);
     const hash = 'a'.repeat(40);

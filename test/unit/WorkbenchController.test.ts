@@ -922,6 +922,126 @@ describe('WorkbenchController', () => {
     });
   });
 
+  it.each([
+    { olderType: 'selectCommit', newerType: 'selectCommit' },
+    { olderType: 'selectParent', newerType: 'selectCommit' },
+    { olderType: 'selectCommit', newerType: 'selectParent' },
+    { olderType: 'selectParent', newerType: 'selectParent' },
+  ] as const)(
+    'does not let delayed $olderType persistence cancel a newer $newerType',
+    async ({ olderType, newerType }) => {
+      const repository = await createRepository();
+      await execFileAsync(
+        'git',
+        [
+          '-c',
+          'user.name=Alice',
+          '-c',
+          'user.email=alice@example.com',
+          'commit',
+          '--allow-empty',
+          '-m',
+          'second commit',
+        ],
+        { cwd: repository },
+      );
+      const runner = new GitRunner();
+      const gitService = new GitService(runner);
+      const messages: ExtensionToWebviewMessage[] = [];
+      let delayNextPersistence = false;
+      let releasePersistence: (() => void) | undefined;
+      const persistenceGate = new Promise<void>((resolve) => {
+        releasePersistence = resolve;
+      });
+      let markPersistenceStarted: (() => void) | undefined;
+      const persistenceStarted = new Promise<void>((resolve) => {
+        markPersistenceStarted = resolve;
+      });
+      const controller = new (
+        await import('../../src/webview/WorkbenchController')
+      ).WorkbenchController({
+        workspaceRoots: [repository],
+        gitService,
+        gitRunner: runner,
+        scanDepth: 0,
+        initialPageSize: 200,
+        pageSize: 500,
+        initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+        postMessage(message) {
+          messages.push(message);
+          return Promise.resolve(true);
+        },
+        persistLayout: () => Promise.resolve(),
+        async persistState() {
+          if (delayNextPersistence) {
+            delayNextPersistence = false;
+            markPersistenceStarted?.();
+            await persistenceGate;
+          }
+        },
+      });
+      await controller.handleMessage({ type: 'ready', requestId: 'ready-selection-persistence' });
+      const data = messages.find((message) => message.type === 'repositoryData');
+      expect(data?.commits).toHaveLength(2);
+      const [head, parent] = data!.commits;
+      const repositoryId = data!.repositoryId;
+      delayNextPersistence = true;
+      const older = controller.handleMessage({
+        type: olderType,
+        requestId: 'older-selection',
+        repositoryId,
+        hash:
+          olderType === 'selectCommit' && newerType === 'selectCommit' ? parent!.hash : head!.hash,
+        ...(olderType === 'selectParent' ? { parent: parent!.hash } : {}),
+      } as Parameters<typeof controller.handleMessage>[0]);
+      await persistenceStarted;
+      let markDetailsStarted: (() => void) | undefined;
+      const detailsStarted = new Promise<void>((resolve) => {
+        markDetailsStarted = resolve;
+      });
+      let releaseDetails: (() => void) | undefined;
+      const detailsGate = new Promise<void>((resolve) => {
+        releaseDetails = resolve;
+      });
+      let newerSignal: AbortSignal | undefined;
+      const getCommitDetails = gitService.getCommitDetails.bind(gitService);
+      vi.spyOn(gitService, 'getCommitDetails').mockImplementationOnce(async (...args) => {
+        newerSignal = args[3];
+        markDetailsStarted?.();
+        await detailsGate;
+        return getCommitDetails(...args);
+      });
+      const newer = controller.handleMessage({
+        type: newerType,
+        requestId: 'newer-selection',
+        repositoryId,
+        hash: head!.hash,
+        ...(newerType === 'selectParent' ? { parent: parent!.hash } : {}),
+      } as Parameters<typeof controller.handleMessage>[0]);
+      await detailsStarted;
+      releasePersistence?.();
+      await older;
+      releaseDetails?.();
+      await newer;
+
+      expect(newerSignal?.aborted).toBe(false);
+      expect(messages).toContainEqual(
+        expect.objectContaining({
+          type: 'selectionDetailsLoaded',
+          requestId: 'newer-selection',
+          details: expect.objectContaining({ hash: head!.hash }),
+        }),
+      );
+      expect(messages).not.toContainEqual(
+        expect.objectContaining({
+          type: 'loading',
+          scope: 'selection',
+          requestId: 'older-selection',
+        }),
+      );
+    },
+  );
+
   it('does not let an older filter persistence delay abort a newer same-repository query', async () => {
     const repository = await createRepository();
     const messages: ExtensionToWebviewMessage[] = [];

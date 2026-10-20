@@ -138,6 +138,7 @@ export class WorkbenchController {
   private workspaceRoots: readonly string[];
   private automaticRequestSequence = 0;
   private repositorySelectionSequence = 0;
+  private selectionRequestSequence = 0;
   private initializationSequence = 0;
   private logRequestSequence = 0;
   private readonly activeOperationGroups = new Map<string, number>();
@@ -203,6 +204,7 @@ export class WorkbenchController {
           break;
         case 'selectRepository': {
           this.requireRepository(message.repositoryId);
+          this.selectionRequestSequence += 1;
           const selectionSequence = ++this.repositorySelectionSequence;
           await this.leaveFolderHistory(message.requestId);
           if (selectionSequence !== this.repositorySelectionSequence) return;
@@ -244,14 +246,21 @@ export class WorkbenchController {
           );
           break;
         }
-        case 'selectCommit':
+        case 'selectCommit': {
           this.requireSelectedRepository(message.repositoryId);
+          const selectionSequence = ++this.selectionRequestSequence;
           this.selectedCommits.set(message.repositoryId, message.hash);
           this.selectedCommitRanges.set(
             message.repositoryId,
             message.hashes ?? [message.hash],
           );
           await this.persistWorkbenchState();
+          if (
+            selectionSequence !== this.selectionRequestSequence ||
+            message.repositoryId !== this.selectedRepositoryId
+          ) {
+            break;
+          }
           await this.loadSelection(
             message.repositoryId,
             message.hash,
@@ -260,6 +269,7 @@ export class WorkbenchController {
             message.hashes ?? [message.hash],
           );
           break;
+        }
         case 'requestCommitMessages': {
           this.requireSelectedRepository(message.repositoryId);
           const repository = this.requireRepository(message.repositoryId);
@@ -279,10 +289,17 @@ export class WorkbenchController {
           });
           break;
         }
-        case 'selectParent':
+        case 'selectParent': {
           this.requireSelectedRepository(message.repositoryId);
+          const selectionSequence = ++this.selectionRequestSequence;
           this.selectedCommits.set(message.repositoryId, message.hash);
           await this.persistWorkbenchState();
+          if (
+            selectionSequence !== this.selectionRequestSequence ||
+            message.repositoryId !== this.selectedRepositoryId
+          ) {
+            break;
+          }
           await this.loadSelection(
             message.repositoryId,
             message.hash,
@@ -291,6 +308,7 @@ export class WorkbenchController {
             this.selectedCommitRanges.get(message.repositoryId) ?? [message.hash],
           );
           break;
+        }
         case 'requestLogPage':
           this.requireSelectedRepository(message.repositoryId);
           await this.loadRepository(
@@ -532,6 +550,7 @@ export class WorkbenchController {
       throw new Error('Invalid folder history path.');
     }
     this.initializationSequence += 1;
+    this.selectionRequestSequence += 1;
     const transitionSequence = ++this.repositorySelectionSequence;
     this.logRequestSequence += 1;
     this.logAbortController?.abort();
@@ -863,6 +882,7 @@ export class WorkbenchController {
   }
 
   private async initialize(requestId: string): Promise<void> {
+    this.selectionRequestSequence += 1;
     const folderHistory = this.restoreFolderHistoryState();
     if (folderHistory?.previousSelectedRepositoryId) {
       this.selectedRepositoryId = folderHistory.previousSelectedRepositoryId;
@@ -950,6 +970,7 @@ export class WorkbenchController {
         this.selectedRepositoryId = effectiveRepositoryId;
       }
       if (headChanged) {
+        this.selectionRequestSequence += 1;
         this.selectionAbortController?.abort();
         this.scrollTops.set(effectiveRepositoryId, 0);
         this.logOffsets.set(effectiveRepositoryId, 0);

@@ -822,7 +822,6 @@ export function App() {
           setStashDialog(undefined);
           setAmendDialog(undefined);
           stashDialogRepository.current = undefined;
-          activeOperationRequestByRepository.current.clear();
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
           selectedRepositoryIdRef.current = message.selectedRepositoryId;
@@ -842,7 +841,7 @@ export function App() {
             startRowOffset: 0,
             graphContinuation: undefined,
             windowAnchorReady: false,
-            operationRepositoryIds: new Set(),
+            operationRepositoryIds: new Set(activeOperationRequestByRepository.current.keys()),
             layout: message.layout,
             filters: defaultFilters,
             refs: [],
