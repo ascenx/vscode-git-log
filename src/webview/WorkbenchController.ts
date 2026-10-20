@@ -1140,7 +1140,12 @@ export class WorkbenchController {
     const abortController = new AbortController();
     this.selectionAbortController = abortController;
 
-    await this.options.postMessage({ type: 'loading', requestId, repositoryId, scope: 'selection' });
+    await this.options.postMessage({
+      type: 'loading',
+      requestId,
+      repositoryId,
+      scope: 'selection',
+    });
     const details = await this.options.gitService.getCommitDetails(
       fileURLToPath(repository.rootUri),
       hash,
@@ -1148,36 +1153,48 @@ export class WorkbenchController {
       abortController.signal,
     );
     const cwd = fileURLToPath(repository.rootUri);
-    const selectedFiles: ChangedFile[] = [];
-    for (const selectedHash of selectedHashes) {
-      if (abortController.signal.aborted) return;
-      const selectedDetails =
-        selectedHash === hash
-          ? details
-          : await this.options.gitService.getCommitDetails(
-              cwd,
-              selectedHash,
-              this.refs.get(repositoryId) ?? [],
-              abortController.signal,
-            );
-      const parent = selectedHash === hash
-        ? selectedParent ?? selectedDetails.parents[0]
-        : selectedDetails.parents[0];
-      const files = await this.options.gitService.getChangedFiles(
-        cwd,
-        selectedHash,
-        parent,
-        abortController.signal,
-      );
-      selectedFiles.push(
-        ...files.map((file) => ({
-          ...file,
-          commitHash: selectedHash,
-          ...(parent ? { parentHash: parent } : {}),
-        })),
-      );
-    }
-    const files = mergeSelectedCommitFiles(selectedFiles);
+    const selectedFiles: ChangedFile[][] = new Array(selectedHashes.length);
+    let nextIndex = 0;
+    let failure: { error: unknown } | undefined;
+    const loadNext = async (): Promise<void> => {
+      while (!abortController.signal.aborted && nextIndex < selectedHashes.length) {
+        const index = nextIndex++;
+        const selectedHash = selectedHashes[index]!;
+        try {
+          const selectedDetails =
+            selectedHash === hash
+              ? details
+              : await this.options.gitService.getCommitDetails(
+                  cwd,
+                  selectedHash,
+                  this.refs.get(repositoryId) ?? [],
+                  abortController.signal,
+                );
+          if (abortController.signal.aborted) return;
+          const parent =
+            selectedHash === hash
+              ? (selectedParent ?? selectedDetails.parents[0])
+              : selectedDetails.parents[0];
+          const files = await this.options.gitService.getChangedFiles(
+            cwd,
+            selectedHash,
+            parent,
+            abortController.signal,
+          );
+          selectedFiles[index] = files.map((file) => ({
+            ...file,
+            commitHash: selectedHash,
+            ...(parent ? { parentHash: parent } : {}),
+          }));
+        } catch (error) {
+          failure ??= { error };
+          abortController.abort();
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(4, selectedHashes.length) }, loadNext));
+    if (failure) throw failure.error;
+    const files = mergeSelectedCommitFiles(selectedFiles.flat());
     if (abortController.signal.aborted) return;
     if (
       repositoryId !== this.selectedRepositoryId ||

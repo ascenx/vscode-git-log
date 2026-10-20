@@ -46,6 +46,260 @@ async function createHistoryFixture(): Promise<string> {
 }
 
 describe('GitService', () => {
+  describe('selection query cache', () => {
+    const hash = 'a'.repeat(40);
+    const parent = 'b'.repeat(40);
+    const cwd = '/workspace/cache';
+
+    function fixture(body = 'subject', parentHash = parent, hashWidth = 40) {
+      const run = vi.fn(async (args: readonly string[]) => ({
+        stdout:
+          args[0] === 'show'
+            ? Buffer.from(
+                [
+                  args.at(-2)!.padEnd(hashWidth, 'a'),
+                  parentHash,
+                  'Author',
+                  'a@test',
+                  '1',
+                  'Committer',
+                  'c@test',
+                  '2',
+                  body,
+                  'N',
+                ].join('\0'),
+              )
+            : Buffer.from(args.includes('--numstat') ? '1\t2\tfile.txt\0' : 'M\0file.txt\0'),
+        stderr: Buffer.alloc(0),
+        exitCode: 0,
+        durationMs: 1,
+      }));
+      return { run, service: new GitService({ run } as unknown as GitRunner) };
+    }
+
+    it('reuses successful queries while attaching current refs and copying returned values', async () => {
+      const { run, service } = fixture();
+      const details = await service.getCommitDetails(cwd, hash, []);
+      const files = await service.getChangedFiles(cwd, hash, parent);
+      details.parents.length = 0;
+      files[0]!.path = 'mutated';
+      const refs = [
+        {
+          kind: 'local' as const,
+          shortName: 'main',
+          fullName: 'refs/heads/main',
+          target: hash,
+          ahead: 0,
+          behind: 0,
+          isCurrent: true,
+        },
+      ];
+      expect(await service.getCommitDetails(cwd, hash, refs)).toMatchObject({
+        parents: [parent],
+        refs,
+      });
+      expect(await service.getChangedFiles(cwd, hash, parent)).toMatchObject([{ path: 'file.txt' }]);
+      expect(run).toHaveBeenCalledTimes(3);
+    });
+
+    it('isolates repositories and diff parents', async () => {
+      const { run, service } = fixture();
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, parent);
+      await service.getChangedFiles(cwd, hash, 'c'.repeat(40));
+      await service.getCommitDetails('/other', hash, []);
+      await service.getChangedFiles('/other', hash, parent);
+      await service.getChangedFiles(cwd, hash, parent);
+      expect(run).toHaveBeenCalledTimes(8);
+    });
+
+    it('invalidates only the refreshed repository, or all repositories', async () => {
+      const { run, service } = fixture();
+      for (const repository of [cwd, '/other']) {
+        await service.getCommitDetails(repository, hash, []);
+        await service.getChangedFiles(repository, hash, parent);
+      }
+      service.invalidateLogCache(cwd);
+      await service.getCommitDetails('/other', hash, []);
+      await service.getChangedFiles('/other', hash, parent);
+      expect(run).toHaveBeenCalledTimes(6);
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, parent);
+      expect(run).toHaveBeenCalledTimes(9);
+      service.invalidateLogCache();
+      await service.getCommitDetails('/other', hash, []);
+      await service.getChangedFiles('/other', hash, parent);
+      expect(run).toHaveBeenCalledTimes(12);
+    });
+
+    it('resolves abbreviated hashes each time, including abbreviated diff parents', async () => {
+      const { run, service } = fixture();
+      await service.getCommitDetails(cwd, 'aaaa', []);
+      await service.getCommitDetails(cwd, 'aaaa', []);
+      await service.getChangedFiles(cwd, 'aaaa', parent);
+      await service.getChangedFiles(cwd, 'aaaa', parent);
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, 'bbbb');
+      await service.getChangedFiles(cwd, hash, 'bbbb');
+      expect(run).toHaveBeenCalledTimes(10);
+    });
+
+    it('rejects cancelled cache hits without launching Git', async () => {
+      const { run, service } = fixture();
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, parent);
+      const controller = new AbortController();
+      controller.abort();
+      await expect(service.getCommitDetails(cwd, hash, [], controller.signal)).rejects.toMatchObject({
+        cancelled: true,
+      });
+      await expect(
+        service.getChangedFiles(cwd, hash, parent, controller.signal),
+      ).rejects.toMatchObject({ cancelled: true });
+      expect(run).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not cache failed queries', async () => {
+      const { run, service } = fixture();
+      run.mockRejectedValueOnce(new Error('failed details'));
+      await expect(service.getCommitDetails(cwd, hash, [])).rejects.toThrow('failed details');
+      await service.getCommitDetails(cwd, hash, []);
+      run.mockRejectedValueOnce(new Error('failed diff'));
+      await expect(service.getChangedFiles(cwd, hash, parent)).rejects.toThrow('failed diff');
+      await service.getChangedFiles(cwd, hash, parent);
+      await service.getChangedFiles(cwd, hash, parent);
+      expect(run).toHaveBeenCalledTimes(6);
+    });
+
+    it('bounds retained entries and keeps recently used queries', async () => {
+      const { run, service } = fixture();
+      const hashes = Array.from({ length: 101 }, (_, index) =>
+        (index + 1).toString(16).padStart(40, '0'),
+      );
+      for (const selected of hashes.slice(0, 100)) {
+        await service.getCommitDetails(cwd, selected, []);
+        await service.getChangedFiles(cwd, selected, parent);
+      }
+      await service.getCommitDetails(cwd, hashes[0]!, []);
+      await service.getChangedFiles(cwd, hashes[0]!, parent);
+      await service.getCommitDetails(cwd, hashes[100]!, []);
+      await service.getChangedFiles(cwd, hashes[100]!, parent);
+      await service.getCommitDetails(cwd, hashes[0]!, []);
+      await service.getChangedFiles(cwd, hashes[0]!, parent);
+      expect(run).toHaveBeenCalledTimes(303);
+      await service.getCommitDetails(cwd, hashes[1]!, []);
+      await service.getChangedFiles(cwd, hashes[1]!, parent);
+      expect(run).toHaveBeenCalledTimes(306);
+    });
+
+    it('does not retain oversized commit messages', async () => {
+      const { run, service } = fixture('x'.repeat(70_000));
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getCommitDetails(cwd, hash, []);
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+
+    it('caches root commits without another details process', async () => {
+      const { run, service } = fixture('root', '');
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash);
+      await service.getChangedFiles(cwd, hash);
+      expect(run).toHaveBeenCalledTimes(3);
+    });
+
+    it('does not treat a 40-character SHA-256 abbreviation as a full hash', async () => {
+      const { run, service } = fixture('sha256', 'b'.repeat(64), 64);
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, 'b'.repeat(64));
+      await service.getChangedFiles(cwd, hash, 'b'.repeat(64));
+      expect(run).toHaveBeenCalledTimes(6);
+      await service.getCommitDetails(cwd, 'a'.repeat(64), []);
+      await service.getChangedFiles(cwd, 'a'.repeat(64), 'b'.repeat(64));
+      await service.getChangedFiles(cwd, 'a'.repeat(64), 'b'.repeat(64));
+      expect(run).toHaveBeenCalledTimes(8);
+    });
+
+    it.each(['count', 'bytes'] as const)(
+      'does not retain oversized file lists by %s',
+      async (limit) => {
+        const { run, service } = fixture();
+        await service.getCommitDetails(cwd, hash, []);
+        const original = run.getMockImplementation()!;
+        run.mockImplementation(async (args) => ({
+          ...(await original(args)),
+          stdout: args.includes('--numstat')
+            ? Buffer.alloc(0)
+            : Buffer.from(
+                limit === 'count'
+                  ? Array.from({ length: 1001 }, (_, index) => `M\0file-${index}\0`).join('')
+                  : `M\0${'x'.repeat(256 * 1024)}\0`,
+              ),
+        }));
+        await service.getChangedFiles(cwd, hash, parent);
+        await service.getChangedFiles(cwd, hash, parent);
+        expect(run).toHaveBeenCalledTimes(5);
+      },
+    );
+
+    it.each(['details', 'files'] as const)(
+      'does not retain %s cancelled before completion',
+      async (query) => {
+        const { run, service } = fixture();
+        const controller = new AbortController();
+        if (query === 'files') await service.getCommitDetails(cwd, hash, []);
+        const original = run.getMockImplementation()!;
+        run.mockImplementationOnce(async (args) => {
+          controller.abort();
+          return original(args);
+        });
+        const load = (signal?: AbortSignal) =>
+          query === 'details'
+            ? service.getCommitDetails(cwd, hash, [], signal)
+            : service.getChangedFiles(cwd, hash, parent, signal);
+        await expect(load(controller.signal)).rejects.toMatchObject({ cancelled: true });
+        await load();
+        await load();
+        expect(run).toHaveBeenCalledTimes(query === 'details' ? 2 : 5);
+      },
+    );
+
+    it('does not repopulate the file cache from a diff started before refresh', async () => {
+      const { run, service } = fixture();
+      await service.getCommitDetails(cwd, hash, []);
+      const original = run.getMockImplementation()!;
+      run.mockImplementationOnce(async (args) => {
+        service.invalidateLogCache(cwd);
+        return original(args);
+      });
+      await service.getChangedFiles(cwd, hash, parent);
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getChangedFiles(cwd, hash, parent);
+      await service.getChangedFiles(cwd, hash, parent);
+      expect(run).toHaveBeenCalledTimes(6);
+    });
+
+    it('does not repopulate caches from queries started before invalidation', async () => {
+      const { run, service } = fixture();
+      let release: (() => void) | undefined;
+      const waiting = new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      const original = run.getMockImplementation()!;
+      run.mockImplementationOnce(async (args) => {
+        await waiting;
+        return original(args);
+      });
+      const pending = service.getCommitDetails(cwd, hash, []);
+      service.invalidateLogCache(cwd);
+      release!();
+      await pending;
+      await service.getCommitDetails(cwd, hash, []);
+      await service.getCommitDetails(cwd, hash, []);
+      expect(run).toHaveBeenCalledTimes(2);
+    });
+  });
+
   it('lists named stashes from a real repository', async () => {
     const repository = await createHistoryFixture();
     await writeFile(join(repository, 'README.md'), 'stashed\n');

@@ -512,6 +512,123 @@ describe('WorkbenchController', () => {
     });
   });
 
+  it.each(['success', 'failure', 'cancelled'] as const)(
+    'bounds concurrent selection queries and preserves ordering on %s',
+    async (outcome) => {
+      const repository = await createRepository();
+      const runner = new GitRunner();
+      const gitService = new GitService(runner);
+      const messages: ExtensionToWebviewMessage[] = [];
+      const controller = new (
+        await import('../../src/webview/WorkbenchController')
+      ).WorkbenchController({
+        workspaceRoots: [repository],
+        gitService,
+        gitRunner: runner,
+        scanDepth: 0,
+        initialPageSize: 200,
+        pageSize: 500,
+        initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+        postMessage(message) {
+          messages.push(message);
+          return Promise.resolve(true);
+        },
+        persistLayout: () => Promise.resolve(),
+      });
+      await controller.handleMessage({ type: 'ready', requestId: 'ready-concurrent-selection' });
+      const data = messages.find((message) => message.type === 'repositoryData')!;
+      const template = await gitService.getCommitDetails(repository, data.commits[0]!.hash, []);
+      const hashes = Array.from({ length: 9 }, (_, index) =>
+        (index + 1).toString(16).padStart(40, '0'),
+      );
+      vi.spyOn(gitService, 'getCommitDetails').mockImplementation(async (_cwd, hash) => ({
+        ...template,
+        hash,
+        parents: ['a'.repeat(40)],
+      }));
+      let running = 0;
+      let maximumRunning = 0;
+      let started: (() => void) | undefined;
+      const firstStarted = new Promise<void>((resolve) => {
+        started = resolve;
+      });
+      let selectionSignal: AbortSignal | undefined;
+      vi.spyOn(gitService, 'getChangedFiles').mockImplementation(
+        async (_cwd, hash, _parent, signal) => {
+          const index = hashes.indexOf(hash);
+          if (index < 0) return [];
+          selectionSignal = signal;
+          running += 1;
+          maximumRunning = Math.max(maximumRunning, running);
+          started?.();
+          try {
+            await new Promise((resolve) => setTimeout(resolve, (hashes.length - index) * 2));
+            if (signal?.aborted)
+              throw new GitCommandError(
+                'Git command was cancelled.',
+                ['diff'],
+                repository,
+                null,
+                Buffer.alloc(0),
+                Buffer.alloc(0),
+                true,
+                false,
+              );
+            if (outcome === 'failure' && index === 1) throw new Error('Primary diff failure.');
+            return [{ status: 'M', path: `file-${index}.txt`, binary: false }];
+          } finally {
+            running -= 1;
+          }
+        },
+      );
+      const selection = controller.handleMessage({
+        type: 'selectCommit',
+        requestId: 'concurrent-selection',
+        repositoryId: data.repositoryId,
+        hash: hashes[0]!,
+        hashes,
+      });
+      await firstStarted;
+      if (outcome === 'cancelled') {
+        await controller.handleMessage({
+          type: 'selectCommit',
+          requestId: 'replacement-selection',
+          repositoryId: data.repositoryId,
+          hash: 'b'.repeat(40),
+        });
+      }
+      await selection;
+      if (outcome !== 'cancelled') expect(maximumRunning).toBe(4);
+      expect(maximumRunning).toBeLessThanOrEqual(4);
+      expect(running).toBe(0);
+      if (outcome === 'success') {
+        const loaded = messages.find(
+          (message) =>
+            message.type === 'selectionDetailsLoaded' && message.requestId === 'concurrent-selection',
+        );
+        expect(
+          loaded?.type === 'selectionDetailsLoaded'
+            ? loaded.files.map((file) => file.commitHash)
+            : [],
+        ).toEqual(hashes);
+      } else {
+        expect(selectionSignal?.aborted).toBe(true);
+        expect(messages).not.toContainEqual(
+          expect.objectContaining({
+            type: 'selectionDetailsLoaded',
+            requestId: 'concurrent-selection',
+          }),
+        );
+        if (outcome === 'failure')
+          expect(messages.at(-1)).toMatchObject({
+            type: 'error',
+            requestId: 'concurrent-selection',
+            message: 'Primary diff failure.',
+          });
+      }
+    },
+  );
+
   it('loads complete commit messages in the requested top-to-bottom order', async () => {
     const repository = await createRepository();
     await writeFile(join(repository, 'app.txt'), 'second\n');

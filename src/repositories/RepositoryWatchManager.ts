@@ -14,8 +14,13 @@ export type RepositoryWatchFactory = (
 const WORKTREE_PATTERNS = ['HEAD', 'index', 'logs/**'] as const;
 const COMMON_PATTERNS = ['refs/**', 'packed-refs', 'logs/**'] as const;
 
+interface WatchedTarget {
+  repositoryIds: Set<string>;
+  disposable: WatchDisposable;
+}
+
 export class RepositoryWatchManager implements WatchDisposable {
-  private watchers: WatchDisposable[] = [];
+  private watchers = new Map<string, WatchedTarget>();
   private timers = new Map<string, ReturnType<typeof setTimeout>>();
 
   constructor(
@@ -25,7 +30,6 @@ export class RepositoryWatchManager implements WatchDisposable {
   ) {}
 
   replace(repositories: readonly RepositorySummary[]): void {
-    this.disposeWatchers();
     const targets = new Map<string, { basePath: string; pattern: string; repositoryIds: Set<string> }>();
 
     for (const repository of repositories) {
@@ -48,11 +52,32 @@ export class RepositoryWatchManager implements WatchDisposable {
       }
     }
 
-    this.watchers = [...targets.values()].map((target) =>
-      this.watch(target.basePath, target.pattern, () => {
-        for (const repositoryId of target.repositoryIds) this.schedule(repositoryId);
-      }),
-    );
+    for (const [key, watched] of this.watchers) {
+      if (targets.has(key)) continue;
+      watched.repositoryIds.clear();
+      watched.disposable.dispose();
+      this.watchers.delete(key);
+    }
+    for (const [key, target] of targets) {
+      const existing = this.watchers.get(key);
+      if (existing) {
+        existing.repositoryIds = target.repositoryIds;
+        continue;
+      }
+      const watched: WatchedTarget = {
+        repositoryIds: target.repositoryIds,
+        disposable: this.watch(target.basePath, target.pattern, () => {
+          for (const repositoryId of watched.repositoryIds) this.schedule(repositoryId);
+        }),
+      };
+      this.watchers.set(key, watched);
+    }
+    const repositoryIds = new Set(repositories.map((repository) => repository.id));
+    for (const [repositoryId, timer] of this.timers) {
+      if (repositoryIds.has(repositoryId)) continue;
+      clearTimeout(timer);
+      this.timers.delete(repositoryId);
+    }
   }
 
   dispose(): void {
@@ -74,7 +99,10 @@ export class RepositoryWatchManager implements WatchDisposable {
   }
 
   private disposeWatchers(): void {
-    for (const watcher of this.watchers) watcher.dispose();
-    this.watchers = [];
+    for (const watched of this.watchers.values()) {
+      watched.repositoryIds.clear();
+      watched.disposable.dispose();
+    }
+    this.watchers.clear();
   }
 }

@@ -25,6 +25,10 @@ const TEXT_SCAN_PAGE_SIZE = 5000;
 const TEXT_SCAN_MAX_STDOUT_BYTES = 64 * 1024 * 1024;
 const MAX_RETAINED_TEXT_MATCHES = 10_000;
 const MAX_TEXT_SEARCH_CACHES = 2;
+const MAX_SELECTION_CACHE_ENTRIES = 100;
+const MAX_CACHED_DETAILS_BYTES = 64 * 1024;
+const MAX_CACHED_FILES_BYTES = 256 * 1024;
+const MAX_CACHED_FILES = 1000;
 // Retain a small internal topology sample for projection, but never return these rows.
 const MAX_GRAPH_CONTEXT_ROWS_PER_MATCH = 3;
 const MAX_PROJECTED_GRAPH_PARENTS = 4;
@@ -106,6 +110,51 @@ function webviewFilePatchText(patch: Buffer): string {
     }
   }
   return patch.toString('utf8');
+}
+
+interface RepositoryCacheEntry<T> {
+  cwd: string;
+  value: T;
+}
+
+function readSelectionCache<T>(
+  cache: Map<string, RepositoryCacheEntry<T>>,
+  key: string,
+): T | undefined {
+  const entry = cache.get(key);
+  if (!entry) return undefined;
+  cache.delete(key);
+  cache.set(key, entry);
+  return entry.value;
+}
+
+function storeSelectionCache<T>(
+  cache: Map<string, RepositoryCacheEntry<T>>,
+  key: string,
+  cwd: string,
+  value: T,
+): void {
+  cache.delete(key);
+  cache.set(key, { cwd, value });
+  if (cache.size > MAX_SELECTION_CACHE_ENTRIES) {
+    const oldest = cache.keys().next().value;
+    if (oldest !== undefined) cache.delete(oldest);
+  }
+}
+
+function checkSelectionCancellation(cwd: string, signal?: AbortSignal): void {
+  if (signal?.aborted) {
+    throw new GitCommandError(
+      'Git command was cancelled.',
+      [],
+      cwd,
+      null,
+      Buffer.alloc(0),
+      Buffer.alloc(0),
+      true,
+      false,
+    );
+  }
 }
 
 interface TextSearchCacheEntry {
@@ -511,6 +560,9 @@ function hasPendingGraphRoutesForRange(
 
 export class GitService {
   private readonly textSearchCaches = new Map<string, TextSearchCacheEntry>();
+  private readonly detailsCache = new Map<string, RepositoryCacheEntry<CommitDetails>>();
+  private readonly filesCache = new Map<string, RepositoryCacheEntry<ChangedFile[]>>();
+  private selectionCacheGeneration = 0;
 
   constructor(private readonly runner: GitRunner) {}
 
@@ -570,12 +622,16 @@ export class GitService {
   }
 
   invalidateLogCache(cwd?: string): void {
-    if (cwd === undefined) {
-      this.textSearchCaches.clear();
-      return;
-    }
-    for (const [key, entry] of this.textSearchCaches) {
-      if (entry.cwd === cwd) this.textSearchCaches.delete(key);
+    // Pending reads from before a refresh must not repopulate the invalidated caches.
+    this.selectionCacheGeneration += 1;
+    for (const cache of [this.textSearchCaches, this.detailsCache, this.filesCache]) {
+      if (cwd === undefined) {
+        cache.clear();
+      } else {
+        for (const [key, entry] of cache) {
+          if (entry.cwd === cwd) cache.delete(key);
+        }
+      }
     }
   }
 
@@ -795,11 +851,27 @@ export class GitService {
       throw new Error(`Invalid commit hash: ${hash}`);
     }
 
+    checkSelectionCancellation(cwd, signal);
+    const key = JSON.stringify([cwd, hash.toLowerCase()]);
+    const cached = readSelectionCache(this.detailsCache, key);
+    if (cached) {
+      return attachRefs({ ...cached, parents: [...cached.parents] }, indexRefsByTarget(refs));
+    }
+    const generation = this.selectionCacheGeneration;
     const result = await this.runner.run(
       ['show', '--no-patch', `--format=${DETAILS_FORMAT}`, hash, '--'],
       { cwd, ...(signal ? { signal } : {}), timeoutMs: 30_000 },
     );
-    return attachRefs(parseCommitDetails(result.stdout), indexRefsByTarget(refs));
+    checkSelectionCancellation(cwd, signal);
+    const details = parseCommitDetails(result.stdout);
+    if (
+      generation === this.selectionCacheGeneration &&
+      result.stdout.length <= MAX_CACHED_DETAILS_BYTES
+    ) {
+      // Store only the resolved object ID; abbreviated hashes must be resolved again.
+      storeSelectionCache(this.detailsCache, JSON.stringify([cwd, details.hash]), cwd, details);
+    }
+    return attachRefs({ ...details, parents: [...details.parents] }, indexRefsByTarget(refs));
   }
 
   async getCommitMessage(cwd: string, hash: string, signal?: AbortSignal): Promise<string> {
@@ -829,13 +901,34 @@ export class GitService {
     signal?: AbortSignal,
   ): Promise<ChangedFile[]> {
     if (!COMMIT_HASH_PATTERN.test(hash)) throw new Error(`Invalid commit hash: ${hash}`);
-    if (parent && !COMMIT_HASH_PATTERN.test(parent)) throw new Error(`Invalid parent hash: ${parent}`);
+    if (parent && !COMMIT_HASH_PATTERN.test(parent))
+      throw new Error(`Invalid parent hash: ${parent}`);
 
+    checkSelectionCancellation(cwd, signal);
+    const generation = this.selectionCacheGeneration;
     const selectedParent =
       parent ?? (await this.getCommitDetails(cwd, hash, [], signal)).parents[0];
+    checkSelectionCancellation(cwd, signal);
+    // A prior details lookup establishes the repository's full object ID length (SHA-1 or SHA-256).
+    const canonicalHash = this.detailsCache.has(JSON.stringify([cwd, hash.toLowerCase()]));
+    const cacheable = canonicalHash && (!selectedParent || selectedParent.length === hash.length);
+    const key = JSON.stringify([cwd, hash.toLowerCase(), selectedParent?.toLowerCase() ?? null]);
+    const cached = cacheable ? readSelectionCache(this.filesCache, key) : undefined;
+    if (cached) return cached.map((file) => ({ ...file }));
     const signalOption = signal ? { signal } : {};
     const statusArgs = selectedParent
-      ? ['diff', '--name-status', '-z', '-M', '-C', '--find-copies-harder', '-l1000', selectedParent, hash, '--']
+      ? [
+          'diff',
+          '--name-status',
+          '-z',
+          '-M',
+          '-C',
+          '--find-copies-harder',
+          '-l1000',
+          selectedParent,
+          hash,
+          '--',
+        ]
       : [
           'diff-tree',
           '--root',
@@ -851,22 +944,23 @@ export class GitService {
         ];
     const numstatArgs = selectedParent
       ? ['diff', '--numstat', '-z', '-M', selectedParent, hash, '--']
-      : [
-          'diff-tree',
-          '--root',
-          '--no-commit-id',
-          '--numstat',
-          '-r',
-          '-z',
-          '-M',
-          hash,
-        ];
+      : ['diff-tree', '--root', '--no-commit-id', '--numstat', '-r', '-z', '-M', hash];
 
     const [statusResult, numstatResult] = await Promise.all([
       this.runner.run(statusArgs, { cwd, ...signalOption, timeoutMs: 60_000 }),
       this.runner.run(numstatArgs, { cwd, ...signalOption, timeoutMs: 60_000 }),
     ]);
-    return applyNumstat(parseNameStatus(statusResult.stdout), numstatResult.stdout);
+    checkSelectionCancellation(cwd, signal);
+    const files = applyNumstat(parseNameStatus(statusResult.stdout), numstatResult.stdout);
+    if (
+      cacheable &&
+      generation === this.selectionCacheGeneration &&
+      files.length <= MAX_CACHED_FILES &&
+      statusResult.stdout.length + numstatResult.stdout.length <= MAX_CACHED_FILES_BYTES
+    ) {
+      storeSelectionCache(this.filesCache, key, cwd, files);
+    }
+    return files.map((file) => ({ ...file }));
   }
 
   async getFilePatch(
