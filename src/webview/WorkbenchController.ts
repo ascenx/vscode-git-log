@@ -1292,8 +1292,12 @@ export class WorkbenchController {
       ));
       if (followHead) {
         const filters = this.filters.get(repository.id);
-        if (filters?.branches.length) {
-          this.filters.set(repository.id, { ...filters, branches: [] });
+        if (filters?.allBranches || filters?.branches.length) {
+          this.filters.set(repository.id, {
+            ...filters,
+            ...(filters.allBranches ? { allBranches: false } : {}),
+            branches: [],
+          });
           await this.persistWorkbenchState();
         }
       }

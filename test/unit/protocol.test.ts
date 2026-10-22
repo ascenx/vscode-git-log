@@ -395,6 +395,18 @@ describe('parseWebviewMessage', () => {
     ).toBeUndefined();
   });
 
+  it('validates the All branch filter mode without weakening explicit selection limits', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const message = (allBranches: unknown, branches: string[] = []) => ({
+      type: 'updateFilters', requestId: 'all-refs', repositoryId: 'repo',
+      filters: { text: '', branches, authors: [], paths: [], allBranches },
+    });
+    expect(parseWebviewMessage(message(true))).toBeDefined();
+    expect(parseWebviewMessage(message(false))).toBeDefined();
+    expect(parseWebviewMessage(message('true'))).toBeUndefined();
+    expect(parseWebviewMessage(message(true, Array.from({ length: 101 }, (_, i) => `refs/heads/b-${i}`)))).toBeUndefined();
+  });
+
   it('bounds filter payloads and rejects control characters or invalid dates', async () => {
     const { parseWebviewMessage } = await import('../../src/protocol/messages');
     const message = (filters: Record<string, unknown>) => ({

@@ -664,7 +664,17 @@ export class GitService {
 
   async getLog(cwd: string, query: LogQuery): Promise<CommitSummary[]> {
     validatePage(query);
-    const filters = query.filters ?? EMPTY_LOG_FILTERS;
+    const requestedFilters = query.filters ?? EMPTY_LOG_FILTERS;
+    const filters = requestedFilters.allBranches
+      ? {
+          ...requestedFilters,
+          allBranches: false,
+          branches: query.refs
+            .filter((ref) => ref.kind !== 'head' && !requestedFilters.branches.includes(ref.fullName))
+            .map((ref) => ref.fullName),
+        }
+      : requestedFilters;
+    if (requestedFilters.allBranches && !filters.branches.length) return [];
     const refsByTarget = indexRefsByTarget(query.refs);
     if (filters.branches.length) {
       const knownRefs = new Set(query.refs.map((ref) => ref.fullName));

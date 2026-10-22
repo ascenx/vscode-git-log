@@ -2925,7 +2925,7 @@ describe('WorkbenchController', () => {
     });
   });
 
-  it('follows detached HEAD commits and refreshes after switching back or saving a branch', async () => {
+  it.each([false, true])('follows detached HEAD after switching or saving a branch with allBranches=%s', async (allBranches) => {
     const repository = await createRepository();
     const git = async (...args: string[]) => (await execFileAsync('git', args, {
       cwd: repository,
@@ -2961,7 +2961,7 @@ describe('WorkbenchController', () => {
     const repositoryId = initialized.selectedRepositoryId;
     const filterRemote = () => controller.handleMessage({
       type: 'updateFilters', requestId: 'filter-remote', repositoryId,
-      filters: { text: '', branches: [remoteRef], authors: [], paths: [] },
+      filters: { text: '', branches: allBranches ? [] : [remoteRef], allBranches, authors: [], paths: [] },
     });
     const run = (requestId: string, operation: GitOperationRequest) => controller.handleMessage({
       type: 'runOperation', requestId, repositoryId, operation,
@@ -2971,11 +2971,12 @@ describe('WorkbenchController', () => {
     const latestLog = () => messages.filter((message) => message.type === 'repositoryData').at(-1);
 
     await filterRemote();
-    expect(latestLog()?.filters.branches).toEqual([remoteRef]);
+    expect(latestLog()?.filters.branches).toEqual(allBranches ? [] : [remoteRef]);
     await run('detach', { kind: 'checkoutDetached', ref: remoteRef });
     expect(latestRepository()?.currentBranch).toBeUndefined();
     expect(latestRepository()?.head).toBe(remoteTip);
     expect(latestLog()?.filters.branches).toEqual([]);
+    expect(latestLog()?.filters.allBranches).toBe(false);
     expect(latestLog()?.selectedHash).toBe(remoteTip);
 
     await writeFile(join(repository, 'detached.txt'), 'detached\n');

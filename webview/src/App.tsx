@@ -71,6 +71,7 @@ function filtersEqual(left: LogFilters, right: LogFilters): boolean {
     left.text === right.text &&
     left.dateFrom === right.dateFrom &&
     left.dateTo === right.dateTo &&
+    Boolean(left.allBranches) === Boolean(right.allBranches) &&
     sameItems(left.branches, right.branches) &&
     sameItems(left.authors, right.authors) &&
     sameItems(left.paths, right.paths)
@@ -555,9 +556,16 @@ export function App() {
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
+  const selectedBranchRefs = state.refs.filter((ref) =>
+    state.filters.allBranches
+      ? !state.filters.branches.includes(ref.fullName)
+      : state.filters.branches.includes(ref.fullName),
+  );
+  const branchFilterCount = state.filters.allBranches
+    ? selectedBranchRefs.length
+    : state.filters.branches.length;
   const allBranchRefsSelected =
-    state.refs.length > 0 &&
-    state.refs.every((ref) => state.filters.branches.includes(ref.fullName));
+    state.refs.length > 0 && selectedBranchRefs.length === state.refs.length;
   const visibleCommitRevealTarget =
     !state.history && commitRevealTarget?.repositoryId === state.selectedRepositoryId
       ? commitRevealTarget
@@ -1668,10 +1676,14 @@ export function App() {
     const branchFilter = ref.fullName === 'HEAD' ? [] : [ref.fullName];
     if (
       (ref.fullName === 'HEAD' || ref.kind === 'local' || ref.kind === 'remote') &&
-      (state.filters.branches.length !== branchFilter.length ||
+      (state.filters.allBranches || state.filters.branches.length !== branchFilter.length ||
         state.filters.branches.some((branch, index) => branch !== branchFilter[index]))
     ) {
-      applyFilters({ ...state.filters, branches: branchFilter });
+      applyFilters({
+        ...state.filters,
+        ...(state.filters.allBranches ? { allBranches: false } : {}),
+        branches: branchFilter,
+      });
     }
     selectHash(ref.target, 'ref');
     if (commit) document.querySelector<HTMLElement>(`[data-commit-hash="${commit.hash}"]`)?.focus();
@@ -2234,13 +2246,13 @@ export function App() {
         <button
           type="button"
           data-popup-trigger="true"
-          className={state.filters.branches.length ? 'filter-active' : ''}
+          className={state.filters.allBranches || branchFilterCount ? 'filter-active' : ''}
           onClick={() => {
             setContextMenu(undefined);
             setFilterPopup((current) => (current === 'branch' ? undefined : 'branch'));
           }}
         >
-          Branch{state.filters.branches.length ? ` (${String(state.filters.branches.length)})` : ''}
+          Branch{branchFilterCount ? ` (${String(branchFilterCount)})` : ''}
         </button>
         <button
           type="button"
@@ -2293,7 +2305,8 @@ export function App() {
                     onChange={() => {
                       applyFilters({
                         ...state.filters,
-                        branches: allBranchRefsSelected ? [] : state.refs.map((ref) => ref.fullName),
+                        allBranches: !allBranchRefsSelected,
+                        branches: [],
                       });
                     }}
                   />
@@ -2302,9 +2315,9 @@ export function App() {
                 <label className="filter-option">
                   <input
                     type="checkbox"
-                    checked={!state.filters.branches.length}
+                    checked={!state.filters.allBranches && !state.filters.branches.length}
                     disabled={!selectedRepository?.head}
-                    onChange={() => applyFilters({ ...state.filters, branches: [] })}
+                    onChange={() => applyFilters({ ...state.filters, allBranches: false, branches: [] })}
                   />
                   <span>HEAD (local)</span>
                 </label>
@@ -2313,12 +2326,21 @@ export function App() {
                     <label className="filter-option" key={ref.fullName}>
                       <input
                         type="checkbox"
-                        checked={state.filters.branches.includes(ref.fullName)}
+                        checked={state.filters.allBranches
+                          ? !state.filters.branches.includes(ref.fullName)
+                          : state.filters.branches.includes(ref.fullName)}
                         onChange={() => {
                           const branches = state.filters.branches.includes(ref.fullName)
                             ? state.filters.branches.filter((branch) => branch !== ref.fullName)
                             : [...state.filters.branches, ref.fullName];
-                          applyFilters({ ...state.filters, branches });
+                          const allBranches = Boolean(
+                            state.filters.allBranches && branches.length < state.refs.length,
+                          );
+                          applyFilters({
+                            ...state.filters,
+                            allBranches,
+                            branches: state.filters.allBranches && !allBranches ? [] : branches,
+                          });
                         }}
                       />
                       <span>{ref.shortName}</span>

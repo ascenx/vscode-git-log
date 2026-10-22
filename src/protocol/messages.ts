@@ -21,6 +21,8 @@ const MAX_COMMIT_MESSAGE_LENGTH = 100_000;
 
 export interface LogFilters {
   text: string;
+  /** When true, branches contains exclusions from all local, remote, and tag refs. */
+  allBranches?: boolean;
   branches: string[];
   authors: string[];
   dateFrom?: number;
@@ -375,6 +377,7 @@ function isFilters(value: unknown): value is LogFilters {
   const dateTo = value.dateTo;
   return (
     isFilterText(value.text, MAX_FILTER_TEXT_LENGTH) &&
+    (value.allBranches === undefined || typeof value.allBranches === 'boolean') &&
     isFilterArray(
       value.branches,
       (item) =>

@@ -4,7 +4,11 @@ import '@testing-library/jest-dom/vitest';
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { App } from '../../webview/src/App';
-import type { WebviewToExtensionMessage } from '../../src/protocol/messages';
+import {
+  parseWebviewMessage,
+  type ExtensionToWebviewMessage,
+  type WebviewToExtensionMessage,
+} from '../../src/protocol/messages';
 
 afterEach(() => {
   cleanup();
@@ -3130,7 +3134,7 @@ describe('WorkbenchApp', () => {
       expect(within(popup).getByRole('checkbox', { name: ref.shortName })).toBeChecked();
     }
     expect(postedMessages.at(-1)).toMatchObject({
-      type: 'updateFilters', filters: { ...filters, branches: refs.map((ref) => ref.fullName) },
+      type: 'updateFilters', filters: { ...filters, allBranches: true, branches: [] },
     });
 
     fireEvent.click(within(popup).getByRole('checkbox', { name: 'feature' }));
@@ -3144,13 +3148,54 @@ describe('WorkbenchApp', () => {
     expect(selectAll).not.toBeChecked();
   });
 
+  it.each([100, 101, 200])('sends valid All filters for %s refs, including after deselecting one', (count) => {
+    const { commits, newest } = initializeCommitRangeFixture();
+    const refs = Array.from({ length: count }, (_, index) => ({
+      fullName: `refs/heads/branch-${index}`, shortName: `branch-${index}`, kind: 'local',
+      target: newest, ahead: 0, behind: 0, isCurrent: false,
+    }));
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'repositoryData', requestId: 'many-refs', repositoryId: 'repo-commit-range',
+        refs, commits, filters: { text: '', branches: [], authors: [], paths: [] },
+        replace: true, hasMore: false,
+      } }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
+    const popup = screen.getByRole('dialog', { name: 'branch filter' });
+    fireEvent.click(within(popup).getByRole('checkbox', { name: 'All' }));
+    expect(parseWebviewMessage(postedMessages.at(-1))).toBeDefined();
+    expect(postedMessages.at(-1)).toMatchObject({ filters: { allBranches: true, branches: [] } });
+    expect(within(popup).getByRole('checkbox', { name: 'HEAD (local)' })).not.toBeChecked();
+
+    fireEvent.click(within(popup).getByRole('checkbox', { name: 'branch-0' }));
+    expect(parseWebviewMessage(postedMessages.at(-1))).toBeDefined();
+    expect(postedMessages.at(-1)).toMatchObject({
+      filters: { allBranches: true, branches: ['refs/heads/branch-0'] },
+    });
+    expect(within(popup).getByRole('checkbox', { name: 'branch-0' })).not.toBeChecked();
+    expect(within(popup).getByRole('checkbox', { name: 'branch-1' })).toBeChecked();
+
+    fireEvent.click(within(popup).getByRole('checkbox', { name: 'HEAD (local)' }));
+    expect(postedMessages.at(-1)).toMatchObject({ filters: { allBranches: false, branches: [] } });
+    expect(within(popup).getByRole('checkbox', { name: 'HEAD (local)' })).toBeChecked();
+    expect(within(popup).getByRole('checkbox', { name: 'branch-1' })).not.toBeChecked();
+
+    fireEvent.click(within(popup).getByRole('checkbox', { name: 'All' }));
+    fireEvent.click(within(screen.getByRole('navigation', { name: 'Git references' }))
+      .getByRole('button', { name: 'branch-0' }));
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'updateFilters', filters: expect.objectContaining({ allBranches: false, branches: ['refs/heads/branch-0'] }),
+    }));
+  });
+
   it.each([false, true])('offers a local HEAD branch shortcut with detached=%s and no loaded refs', (detached) => {
     const { newest } = initializeCommitRangeFixture();
     if (detached) {
       act(() => {
-        window.dispatchEvent(new MessageEvent('message', {
+        window.dispatchEvent(new MessageEvent<ExtensionToWebviewMessage>('message', {
           data: {
-            type: 'repositoriesChanged', requestId: 'detached-head',
+            type: 'repositoriesUpdated', requestId: 'detached-head',
             repositories: [{
               id: 'repo-commit-range', rootUri: 'file:///workspace/commit-range',
               gitDirUri: 'file:///workspace/commit-range/.git', displayName: 'commit-range',
@@ -3161,6 +3206,9 @@ describe('WorkbenchApp', () => {
         }));
       });
     }
+    expect(within(screen.getByRole('navigation', { name: 'Git references' })).getByRole('button', {
+      name: detached ? newest.slice(0, 8) : 'main',
+    })).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
     const popup = screen.getByRole('dialog', { name: 'branch filter' });
     const head = within(popup).getByRole('checkbox', { name: 'HEAD (local)' });

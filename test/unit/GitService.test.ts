@@ -542,6 +542,47 @@ describe('GitService', () => {
     expect(featureCommits.map((commit) => commit.hash)).not.toContain(mainHash);
   });
 
+  it('resolves All filters and exclusions against named refs for normal, text, and hash queries', async () => {
+    const repository = await createHistoryFixture();
+    await git(repository, 'switch', '-c', 'feature');
+    await git(repository, 'commit', '--allow-empty', '-m', 'feature-only needle');
+    const feature = await git(repository, 'rev-parse', 'HEAD');
+    await git(repository, 'switch', '--detach', 'main');
+    await git(repository, 'commit', '--allow-empty', '-m', 'detached-only needle');
+    const detached = await git(repository, 'rev-parse', 'HEAD');
+    const service = new GitService(new GitRunner());
+    const refs = await service.getRefs(repository);
+    const filters = { ...EMPTY_LOG_FILTERS, allBranches: true };
+    const query = { limit: 20, skip: 0, refs };
+    const all = await service.getLog(repository, { ...query, filters });
+    expect(all.map((commit) => commit.hash)).toContain(feature);
+    expect(all.map((commit) => commit.hash)).not.toContain(detached);
+    const excluded = await service.getLog(repository, {
+      ...query, filters: { ...filters, branches: ['refs/heads/feature'] },
+    });
+    expect(excluded.map((commit) => commit.hash)).not.toContain(feature);
+
+    const headSearch = await service.getLog(repository, {
+      ...query, filters: { ...EMPTY_LOG_FILTERS, text: 'needle' },
+    });
+    expect(headSearch.map((commit) => commit.hash)).toEqual([detached]);
+    const allSearch = await service.getLog(repository, {
+      ...query, filters: { ...filters, text: 'needle' },
+    });
+    expect(allSearch.map((commit) => commit.hash)).toContain(feature);
+    expect(allSearch.map((commit) => commit.hash)).not.toContain(detached);
+    const featureSearch = await service.getLog(repository, {
+      ...query, filters: { ...filters, text: feature },
+    });
+    expect(featureSearch.map((commit) => commit.hash)).toEqual([feature]);
+    expect(await service.getLog(repository, {
+      ...query, filters: { ...filters, text: detached },
+    })).toEqual([]);
+    expect(await service.getLog(repository, {
+      ...query, filters: { ...filters, branches: refs.map((ref) => ref.fullName) },
+    })).toEqual([]);
+  });
+
   it('finds an exact commit hash even when it is outside the current HEAD history', async () => {
     const repository = await createHistoryFixture();
     await git(repository, 'switch', '-c', 'feature');
