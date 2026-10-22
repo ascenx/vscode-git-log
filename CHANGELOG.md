@@ -2,6 +2,17 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.3
+
+### Added
+
+- Added `All` to the Branch filter to select Local, Remote, and Tag references together, and `HEAD (local)` to show the current HEAD's history, including detached HEAD ([#6](https://github.com/ascenx/vscode-git-log/issues/6)). Other log filters are preserved.
+
+### Fixed
+
+- Kept `All` filter requests valid for repositories with more than 100 references, including after deselecting an individual reference.
+- Cleared `All` mode when selecting HEAD or a specific branch, checking out detached HEAD, switching back, or creating and checking out a branch, so the log follows the requested history.
+
 ## 0.1.2
 
 ### Added

@@ -75,6 +75,7 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Remote branch menus offer `Checkout (Detached HEAD)` without creating a local branch. While detached, the HEAD menu provides `Switch Back` (`git switch -`) and `Create Branch and Checkout…` (`git switch -c <name>`). These operations reset the Branch filter to follow HEAD, including subsequent local commits.
 - While detached, `Push HEAD…` in the HEAD menu and toolbar's More actions lets you choose a configured remote and enter an existing or new destination branch. It pushes `HEAD:refs/heads/<branch>` without creating a local branch; non-fast-forward updates are rejected by Git.
 - Synchronized Refs, Commit Graph, Changed Files, and Commit Details areas.
+- Branch filter shortcuts: `All` selects Local, Remote, and Tag references together, supports more than 100 references, and allows individual references to be deselected. `HEAD (local)` shows the current HEAD's history, including detached HEAD, while preserving other log filters.
 - A dedicated Branch pane search and a recursive, collapsible reference tree that groups slash-delimited Local, Remote, and Tag names into folders. Remote names containing `/` remain distinct top-level folders.
 - A dedicated `Git Log` tab in the VS Code bottom Panel alongside Problems, Output, and Terminal. `Open Log` focuses this tab directly without opening an editor page or intermediate welcome view.
 - Paginated logs, bounded sliding windows, custom DAG lanes, graph continuation across windows, fixed-row virtual scrolling, and large-list performance benchmarks. Deep-page global offsets, selections, and relative scroll positions can be restored. `Go to HEAD` locates the checked-out HEAD in the active filtered list and aligns it as the first visible row without changing the filter.
@@ -123,6 +124,7 @@ npm run package
 
 - Click or double-click a Local or Remote branch to display its commit history without checking it out. Use the Local branch context menu when you explicitly want to check it out.
 - Use `Go to HEAD` to locate the repository's checked-out HEAD inside the commit list currently being viewed; it does not switch the active Branch filter.
+- In the `Branch` filter, use `All` to select Local, Remote, and Tag references together, or `HEAD (local)` to return to the current HEAD's history, including detached HEAD. Individual references can be toggled after selecting `All`; text, author, date, and path filters are preserved.
 - Use `Force Delete…` only when a non-current Local Branch must be removed even though it is not fully merged. Git Log shows a modal confirmation before running the operation.
 - Use the Branch pane search to filter references locally. Slash-delimited names are grouped into folders that can be expanded or collapsed independently.
 - Text search lists only matching commits. Hidden commits are represented by compact graph connections between visible matches instead of unrelated merge rows or long-lived branch lanes.
