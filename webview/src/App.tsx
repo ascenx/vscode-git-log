@@ -555,6 +555,9 @@ export function App() {
   const selectedRepository = state.repositories.find(
     (repository) => repository.id === state.selectedRepositoryId,
   );
+  const allBranchRefsSelected =
+    state.refs.length > 0 &&
+    state.refs.every((ref) => state.filters.branches.includes(ref.fullName));
   const visibleCommitRevealTarget =
     !state.history && commitRevealTarget?.repositoryId === state.selectedRepositoryId
       ? commitRevealTarget
@@ -2282,6 +2285,29 @@ export function App() {
             {filterPopup === 'branch' ? (
               <>
                 <div className="filter-popover-title">Branches</div>
+                <label className="filter-option">
+                  <input
+                    type="checkbox"
+                    checked={allBranchRefsSelected}
+                    disabled={!state.refs.length}
+                    onChange={() => {
+                      applyFilters({
+                        ...state.filters,
+                        branches: allBranchRefsSelected ? [] : state.refs.map((ref) => ref.fullName),
+                      });
+                    }}
+                  />
+                  <span>All</span>
+                </label>
+                <label className="filter-option">
+                  <input
+                    type="checkbox"
+                    checked={!state.filters.branches.length}
+                    disabled={!selectedRepository?.head}
+                    onChange={() => applyFilters({ ...state.filters, branches: [] })}
+                  />
+                  <span>HEAD (local)</span>
+                </label>
                 {state.refs.length ? (
                   state.refs.map((ref) => (
                     <label className="filter-option" key={ref.fullName}>

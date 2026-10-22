@@ -3100,6 +3100,93 @@ describe('WorkbenchApp', () => {
     );
   });
 
+  it('selects and clears all branch filter refs while preserving other filters', () => {
+    const { commits, newest } = initializeCommitRangeFixture();
+    const refs = [
+      { fullName: 'refs/heads/main', shortName: 'main', kind: 'local', isCurrent: true },
+      { fullName: 'refs/heads/feature', shortName: 'feature', kind: 'local', isCurrent: false },
+      { fullName: 'refs/remotes/origin/main', shortName: 'origin/main', kind: 'remote', isCurrent: false },
+    ].map((ref) => ({ ...ref, target: newest, ahead: 0, behind: 0 }));
+    const filters = {
+      text: 'commit', branches: ['refs/heads/main'], authors: ['Alice'], paths: ['src'],
+      dateFrom: 1, dateTo: 10,
+    };
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'repositoryData', requestId: 'branch-filter', repositoryId: 'repo-commit-range',
+          refs, commits, filters, replace: true, hasMore: false,
+        },
+      }));
+    });
+    fireEvent.click(screen.getByRole('button', { name: 'Branch (1)' }));
+    const popup = screen.getByRole('dialog', { name: 'branch filter' });
+    const selectAll = within(popup).getByRole('checkbox', { name: 'All' });
+    expect(selectAll).not.toBeChecked();
+
+    fireEvent.click(selectAll);
+    expect(selectAll).toBeChecked();
+    for (const ref of refs) {
+      expect(within(popup).getByRole('checkbox', { name: ref.shortName })).toBeChecked();
+    }
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'updateFilters', filters: { ...filters, branches: refs.map((ref) => ref.fullName) },
+    });
+
+    fireEvent.click(within(popup).getByRole('checkbox', { name: 'feature' }));
+    expect(selectAll).not.toBeChecked();
+    fireEvent.click(selectAll);
+    expect(selectAll).toBeChecked();
+    fireEvent.click(selectAll);
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'updateFilters', filters: { ...filters, branches: [] },
+    });
+    expect(selectAll).not.toBeChecked();
+  });
+
+  it.each([false, true])('offers a local HEAD branch shortcut with detached=%s and no loaded refs', (detached) => {
+    const { newest } = initializeCommitRangeFixture();
+    if (detached) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent('message', {
+          data: {
+            type: 'repositoriesChanged', requestId: 'detached-head',
+            repositories: [{
+              id: 'repo-commit-range', rootUri: 'file:///workspace/commit-range',
+              gitDirUri: 'file:///workspace/commit-range/.git', displayName: 'commit-range',
+              isBare: false, head: newest,
+            }],
+            selectedRepositoryId: 'repo-commit-range',
+          },
+        }));
+      });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
+    const popup = screen.getByRole('dialog', { name: 'branch filter' });
+    const head = within(popup).getByRole('checkbox', { name: 'HEAD (local)' });
+    expect(head).toBeChecked();
+    expect(within(popup).getByRole('checkbox', { name: 'All' })).toBeDisabled();
+
+    // A saved branch selection can arrive before refs have loaded.
+    act(() => {
+      window.dispatchEvent(new MessageEvent('message', {
+        data: {
+          type: 'repositoryData', requestId: 'saved-branch-filter', repositoryId: 'repo-commit-range',
+          refs: [], commits: [],
+          filters: { text: 'needle', branches: ['refs/heads/feature'], authors: ['Alice'], paths: ['src'] },
+          replace: true, hasMore: false,
+        },
+      }));
+    });
+    expect(head).not.toBeChecked();
+    fireEvent.click(head);
+    expect(head).toBeChecked();
+    expect(postedMessages.at(-1)).toMatchObject({
+      type: 'updateFilters',
+      filters: { text: 'needle', branches: [], authors: ['Alice'], paths: ['src'] },
+    });
+  });
+
   it('debounces text filters before querying the selected repository', async () => {
     vi.useFakeTimers();
     render(<App />);
