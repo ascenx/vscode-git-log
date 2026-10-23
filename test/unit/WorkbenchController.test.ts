@@ -71,6 +71,11 @@ describe('WorkbenchController', () => {
     expect(initialized?.type).toBe('initialize');
     if (initialized?.type !== 'initialize' || !initialized.selectedRepositoryId) return;
     const repositoryId = initialized.selectedRepositoryId;
+    await controller.handleMessage({ type: 'requestPullTargets', requestId: 'pull-targets', repositoryId });
+    expect(messages).toContainEqual({
+      type: 'pullTargetsLoaded', requestId: 'pull-targets', repositoryId,
+      remotes: ['origin', 'team/origin'],
+    });
     await controller.handleMessage({ type: 'requestPushHeadTargets', requestId: 'targets', repositoryId });
     expect(messages).toContainEqual({
       type: 'pushHeadTargetsLoaded', requestId: 'targets', repositoryId,

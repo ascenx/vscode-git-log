@@ -145,6 +145,8 @@ npm run package
 - Drag pane and commit-column separators with the mouse, or focus a separator and adjust it with the arrow keys. Toolbar actions can collapse Refs and Changed Files; Commit, Author, Date, and Refs remain available.
 - The User filter pins `Me (current Git user)` to the top using the repository's `git config user.name/user.email`, preferring email matching. Toolbar buttons include hover descriptions.
 - Refresh reads local repository state only. Fetch, Pull, and Push access the configured remote and reuse the system credential helper or SSH Agent.
+- In More actions, `Pull (Rebase)` runs `git pull --rebase` against the current branch's configured upstream. `Pull` continues to run `git pull` using the existing Git configuration.
+- Use `Pull (Rebase) from…` to select a configured remote and enter a branch name. It runs `git pull --rebase <remote> <branch>` without changing the current branch's upstream configuration.
 - Use `Stashes` to create, inspect, apply, pop, or drop saved work.
 
 ## Security and privacy

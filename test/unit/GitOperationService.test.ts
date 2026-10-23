@@ -125,17 +125,17 @@ describe('GitOperationService', () => {
     expect(await git(fixture.remote, 'rev-parse', 'refs/heads/main')).toBe(remoteTip);
   });
 
-  it('rejects unconfigured remotes and malformed branch destinations before pushing', async () => {
+  it.each(['pushHead', 'pull'] as const)('rejects unconfigured remotes and malformed branch destinations before %s', async (kind) => {
     const fixture = await createPushFixture();
     const run = vi.spyOn(RealGitRunner.prototype, 'run');
     try {
       for (const operation of [
-        { kind: 'pushHead' as const, remote: fixture.remote, branch: 'main' },
-        { kind: 'pushHead' as const, remote: 'origin', branch: 'main:refs/heads/other' },
+        { kind, rebase: true, remote: fixture.remote, branch: 'main' },
+        { kind, rebase: true, remote: 'origin', branch: 'main:refs/heads/other' },
       ]) {
         await expect(fixture.service.run(fixture.summary, operation)).rejects.toThrow();
       }
-      expect(run.mock.calls.some(([args]) => args[0] === 'push')).toBe(false);
+      expect(run.mock.calls.some(([args]) => args[0] === 'push' || args[0] === 'pull')).toBe(false);
     } finally {
       run.mockRestore();
     }
@@ -532,6 +532,12 @@ describe('GitOperationService', () => {
       ],
       [{ kind: 'fetch', remote: 'origin' }, ['fetch', 'origin']],
       [{ kind: 'pull' }, ['pull']],
+      [{ kind: 'pull', rebase: false }, ['pull']],
+      [{ kind: 'pull', rebase: true }, ['pull', '--rebase']],
+      [
+        { kind: 'pull', rebase: true, remote: 'origin', branch: 'feature/work' },
+        ['pull', '--rebase', 'origin', 'feature/work'],
+      ],
       [{ kind: 'cherryPick', hash: 'abc1234' }, ['cherry-pick', 'abc1234']],
       [{ kind: 'revert', hash: 'abc1234' }, ['revert', '--no-edit', 'abc1234']],
       [{ kind: 'merge', ref: 'feature/login' }, ['merge', '--no-edit', 'feature/login']],
@@ -1174,6 +1180,43 @@ describe('GitOperationService', () => {
     await git(fixture.path, 'commit', '-m', 'rebase source');
     await service.run(fixture.summary, { kind: 'rebase', ref: 'main' });
     expect(await git(fixture.path, 'merge-base', '--is-ancestor', 'main', 'HEAD')).toBe('');
+  });
+
+  it.each([false, true])('pulls with rebase using an explicit target=%s without changing the upstream', async (explicit) => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-pull-rebase-');
+    const remote = await mkdtemp(join(tmpdir(), 'git-operation-rebase-remote-'));
+    const peer = await mkdtemp(join(tmpdir(), 'git-operation-rebase-peer-'));
+    temporaryDirectories.push(remote, peer);
+    await git(remote, 'init', '--bare');
+    await git(fixture.path, 'remote', 'add', 'team', remote);
+    await git(fixture.path, 'push', '-u', 'team', 'HEAD:refs/heads/integration');
+    await execFileAsync('git', ['clone', '-b', 'integration', remote, peer]);
+    if (explicit) {
+      await git(fixture.path, 'remote', 'add', 'team/origin', remote);
+      await git(peer, 'switch', '-c', 'feature/work');
+    }
+    const remoteTip = await commitFile(peer, 'remote.txt', 'remote\n', 'remote change');
+    await git(peer, 'push', 'origin', explicit ? 'feature/work' : 'integration');
+    const localTip = await commitFile(fixture.path, 'local.txt', 'local\n', 'local change');
+    await git(fixture.path, 'config', 'pull.rebase', 'false');
+    await git(fixture.path, 'config', 'pull.ff', 'false');
+    await git(fixture.path, 'config', 'core.editor', 'true');
+
+    const service = new GitOperationService(new RealGitRunner());
+    await service.run(fixture.summary, {
+      kind: 'pull', rebase: true,
+      ...(explicit ? { remote: 'team/origin', branch: 'feature/work' } : {}),
+    });
+
+    expect(await git(fixture.path, 'rev-parse', 'HEAD^')).toBe(remoteTip);
+    expect(await git(fixture.path, 'rev-parse', 'HEAD')).not.toBe(localTip);
+    expect(await git(fixture.path, 'log', '-1', '--format=%s')).toBe('local change');
+    expect(await git(fixture.path, 'rev-list', '--count', '--merges', 'team/integration..HEAD')).toBe('0');
+    expect(await git(fixture.path, 'branch', '--show-current')).toBe('main');
+    expect(await git(fixture.path, 'rev-parse', '--abbrev-ref', '@{upstream}')).toBe('team/integration');
+    await expect(stat(join(fixture.path, 'remote.txt'))).resolves.toBeDefined();
+    await expect(stat(join(fixture.path, 'local.txt'))).resolves.toBeDefined();
   });
 
   it('fetches, pulls, and pushes through a local bare remote', async () => {

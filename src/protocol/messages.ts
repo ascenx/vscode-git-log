@@ -96,6 +96,7 @@ export type WebviewToExtensionMessage =
   | { type: 'closeFolderHistory'; requestId: string; repositoryId: string }
   | { type: 'requestStashState'; requestId: string; repositoryId: string }
   | { type: 'requestPushHeadTargets'; requestId: string; repositoryId: string }
+  | { type: 'requestPullTargets'; requestId: string; repositoryId: string }
   | { type: 'openStashComparison'; requestId: string; repositoryId: string; hash: string }
   | { type: 'refresh'; requestId: string; repositoryId?: string }
   | { type: 'showOutput'; requestId: string }
@@ -153,7 +154,7 @@ export type GitOperationRequest =
   | { kind: 'checkoutRemote'; name: string; startPoint: string }
   | { kind: 'deleteRemoteBranch'; remote: string; branch: string }
   | { kind: 'fetch'; remote?: string }
-  | { kind: 'pull' }
+  | { kind: 'pull'; rebase?: boolean; remote?: string; branch?: string }
   | { kind: 'push'; forceWithLease?: boolean; remote?: string; targetRef?: string }
   | { kind: 'pushHead'; remote: string; branch: string }
   | { kind: 'cherryPick'; hash: string }
@@ -258,6 +259,7 @@ export type ExtensionToWebviewMessage =
   | { type: 'operationCancelled'; requestId: string; repositoryId: string }
   | { type: 'clipboardCopied'; requestId: string }
   | { type: 'pushHeadTargetsLoaded'; requestId: string; repositoryId: string; remotes: string[] }
+  | { type: 'pullTargetsLoaded'; requestId: string; repositoryId: string; remotes: string[] }
   | {
       type: 'stashStateLoaded';
       requestId: string;
@@ -510,7 +512,11 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
     case 'fetch':
       return value.remote === undefined || isSafeGitToken(value.remote);
     case 'pull':
-      return true;
+      return (
+        (value.rebase === undefined || typeof value.rebase === 'boolean') &&
+        ((value.remote === undefined && value.branch === undefined) ||
+          (value.rebase === true && isSafeGitToken(value.remote) && isRemoteBranchName(value.branch)))
+      );
     case 'pushHead':
       return isSafeGitToken(value.remote) && isRemoteBranchName(value.branch);
     case 'push':
@@ -664,6 +670,7 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
         : undefined;
     case 'requestStashState':
     case 'requestPushHeadTargets':
+    case 'requestPullTargets':
       return hasRepository(value)
         ? { type: value.type, requestId: value.requestId, repositoryId: value.repositoryId }
         : undefined;

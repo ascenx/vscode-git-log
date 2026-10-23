@@ -1,6 +1,40 @@
 import { describe, expect, it } from 'vitest';
 
 describe('parseWebviewMessage', () => {
+  it('validates explicit pull rebase targets as a remote and branch pair', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const request = (operation: Record<string, unknown>) => parseWebviewMessage({
+      type: 'runOperation', requestId: 'pull-from', repositoryId: 'repo', operation,
+    });
+    const operation = { kind: 'pull', rebase: true, remote: 'team/origin', branch: 'feature/work' };
+    expect(request(operation)).toMatchObject({ operation });
+    for (const invalid of [
+      { ...operation, remote: undefined }, { ...operation, branch: undefined },
+      { ...operation, remote: '--all' }, { ...operation, remote: '' },
+      { ...operation, branch: '' }, { ...operation, branch: '--all' },
+      { ...operation, branch: 'main:other' }, { ...operation, branch: 'refs/tags/v1' },
+      { ...operation, branch: 'bad branch' }, { ...operation, branch: 'main\nother' },
+      { ...operation, rebase: false }, { ...operation, rebase: undefined },
+    ]) expect(request(invalid)).toBeUndefined();
+    expect(parseWebviewMessage({
+      type: 'requestPullTargets', requestId: 'targets', repositoryId: 'repo',
+    })).toMatchObject({ type: 'requestPullTargets', repositoryId: 'repo' });
+    expect(parseWebviewMessage({ type: 'requestPullTargets', requestId: 'targets' })).toBeUndefined();
+  });
+
+  it('validates the optional Pull rebase flag', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const request = (operation: Record<string, unknown>) => parseWebviewMessage({
+      type: 'runOperation', requestId: 'pull', repositoryId: 'repo', operation,
+    });
+    for (const operation of [{ kind: 'pull' }, { kind: 'pull', rebase: true }, { kind: 'pull', rebase: false }]) {
+      expect(request(operation)).toMatchObject({ operation });
+    }
+    for (const rebase of ['true', 1, null, {}]) {
+      expect(request({ kind: 'pull', rebase })).toBeUndefined();
+    }
+  });
+
   it('validates explicit HEAD pushes and push target requests', async () => {
     const { parseWebviewMessage } = await import('../../src/protocol/messages');
     const request = (operation: Record<string, unknown>) => parseWebviewMessage({

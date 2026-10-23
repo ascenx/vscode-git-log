@@ -145,6 +145,8 @@ npm run package
 - Pane 和 Commit 列可鼠标拖动，也可聚焦分隔条后使用方向键调整；工具栏可折叠 Refs/Changed Files，Commit、Author、Date、Refs 始终全部展示。
 - User 筛选会根据仓库的 `git config user.name/user.email` 始终置顶 `Me（当前 Git 用户）`，并优先使用邮箱过滤；顶部工具按钮均提供悬停说明。
 - Refresh 只读取本地状态；Fetch、Pull、Push 会访问用户现有 remote，并复用系统 credential helper/SSH Agent。
+- 顶部更多操作中的 `Pull (Rebase)` 执行 `git pull --rebase`，使用当前分支配置的上游；原有 `Pull` 仍执行 `git pull`，遵循现有 Git 配置。
+- 使用 `Pull (Rebase) from…` 可选择已配置的 Remote 并填写分支名，执行 `git pull --rebase <remote> <branch>`，不会修改当前分支的上游配置。
 - 顶部 `Stashes` 用于创建、查看、Apply、Pop 或 Drop 暂存工作。
 
 ## 安全与隐私

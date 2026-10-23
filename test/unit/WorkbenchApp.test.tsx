@@ -186,6 +186,96 @@ describe('WorkbenchApp', () => {
     });
   }
 
+  function openPullFromDialog() {
+    const { newest } = initializeCommitRangeFixture();
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pull (Rebase) from…' }));
+    const request = postedMessages.filter((message) => message.type === 'requestPullTargets').at(-1);
+    if (request?.type !== 'requestPullTargets') throw new Error('Expected pull targets request');
+    return { request, newest };
+  }
+
+  function loadPullRemotes(requestId: string, remotes: string[]): void {
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'pullTargetsLoaded', requestId, repositoryId: 'repo-commit-range', remotes,
+    } })));
+  }
+
+  it('pulls with rebase from a selected remote and branch', () => {
+    const { request } = openPullFromDialog();
+    const dialog = screen.getByRole('dialog', { name: 'Pull (Rebase) from…' });
+    const submit = within(dialog).getByRole('button', { name: 'Pull (Rebase)' });
+    expect(submit).toBeDisabled();
+    loadPullRemotes(request.requestId, ['origin', 'team/origin']);
+    fireEvent.change(within(dialog).getByRole('combobox', { name: 'Remote' }), { target: { value: 'team/origin' } });
+    const branch = within(dialog).getByRole('textbox', { name: 'Target branch' });
+    fireEvent.change(branch, { target: { value: 'main:other' } });
+    expect(submit).toBeDisabled();
+    fireEvent.change(branch, { target: { value: ' feature/work ' } });
+    expect(submit).toBeEnabled();
+    expect(within(dialog).getByText('git pull --rebase team/origin feature/work')).toBeInTheDocument();
+    fireEvent.click(submit);
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-commit-range',
+      operation: { kind: 'pull', rebase: true, remote: 'team/origin', branch: 'feature/work' },
+    }));
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+  });
+
+  it.each(['empty', 'error'] as const)('disables targeted pull when remote loading returns %s', (result) => {
+    const { request } = openPullFromDialog();
+    if (result === 'empty') {
+      loadPullRemotes(request.requestId, []);
+      expect(screen.getByText('No remotes configured.')).toBeInTheDocument();
+    } else {
+      act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'error', requestId: request.requestId, repositoryId: request.repositoryId,
+        message: 'Unable to read remotes',
+      } })));
+      expect(screen.getByRole('alert')).toHaveTextContent('Unable to read remotes');
+    }
+    fireEvent.change(screen.getByRole('textbox', { name: 'Target branch' }), { target: { value: 'main' } });
+    expect(screen.getByRole('button', { name: 'Pull (Rebase)' })).toBeDisabled();
+  });
+
+  it('ignores stale pull target replies and cancels with Escape', () => {
+    const { request } = openPullFromDialog();
+    fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Pull (Rebase) from…' }));
+    loadPullRemotes(request.requestId, ['stale']);
+    expect(screen.queryByRole('option', { name: 'stale' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Pull (Rebase)' })).toBeDisabled();
+    fireEvent.keyDown(screen.getByRole('textbox', { name: 'Target branch' }), { key: 'Escape' });
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
+  it('closes the pull target dialog when repository state changes to detached HEAD', () => {
+    const { request, newest } = openPullFromDialog();
+    updateHeadRepository(newest);
+    loadPullRemotes(request.requestId, ['origin']);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
+  it('closes the pull target dialog when selecting another repository and ignores its late reply', () => {
+    const { request, newest } = openPullFromDialog();
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'repositoriesUpdated', requestId: 'add-pull-repository',
+      selectedRepositoryId: 'repo-commit-range',
+      repositories: ['repo-commit-range', 'repo-other'].map((id) => ({
+        id, rootUri: `file:///workspace/${id}`, gitDirUri: `file:///workspace/${id}/.git`,
+        displayName: id, isBare: false, head: newest, currentBranch: 'main',
+      })),
+    } })));
+    expect(screen.getByRole('dialog', { name: 'Pull (Rebase) from…' })).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('combobox', { name: 'Repository' }), { target: { value: 'repo-other' } });
+    loadPullRemotes(request.requestId, ['origin']);
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument();
+    expect(postedMessages.filter((message) => message.type === 'runOperation')).toEqual([]);
+  });
+
   function openPushHeadDialog(entry: 'head' | 'toolbar' = 'head') {
     const { newest } = initializeCommitRangeFixture();
     updateHeadRepository(newest);
@@ -3333,6 +3423,36 @@ describe('WorkbenchApp', () => {
       });
     } finally {
       innerWidth.mockRestore();
+    }
+  });
+
+  it.each([true, false])('offers Pull (Rebase) with an attached branch=%s', (attached) => {
+    const { newest } = initializeCommitRangeFixture();
+    if (!attached) {
+      act(() => {
+        window.dispatchEvent(new MessageEvent<ExtensionToWebviewMessage>('message', { data: {
+          type: 'repositoriesUpdated', requestId: 'detached-pull', selectedRepositoryId: 'repo-commit-range',
+          repositories: [{ id: 'repo-commit-range', rootUri: 'file:///workspace/commit-range',
+            gitDirUri: 'file:///workspace/commit-range/.git', displayName: 'commit-range', isBare: false, head: newest }],
+        } }));
+      });
+    }
+    fireEvent.click(screen.getByRole('button', { name: 'More actions' }));
+    const pull = screen.getByRole('menuitem', { name: 'Pull' });
+    const pullRebase = screen.getByRole('menuitem', { name: 'Pull (Rebase)' });
+    const pullFrom = screen.getByRole('menuitem', { name: 'Pull (Rebase) from…' });
+    if (attached) {
+      expect(pull).toBeEnabled();
+      expect(pullRebase).toBeEnabled();
+      expect(pullFrom).toBeEnabled();
+      fireEvent.click(pullRebase);
+      expect(postedMessages.at(-1)).toMatchObject({
+        type: 'runOperation', repositoryId: 'repo-commit-range', operation: { kind: 'pull', rebase: true },
+      });
+    } else {
+      expect(pull).toBeDisabled();
+      expect(pullRebase).toBeDisabled();
+      expect(pullFrom).toBeDisabled();
     }
   });
 

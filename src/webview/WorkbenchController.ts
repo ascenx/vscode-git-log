@@ -363,6 +363,7 @@ export class WorkbenchController {
         case 'closeFolderHistory':
           await this.closeFolderHistory(message.requestId, message.repositoryId);
           break;
+        case 'requestPullTargets':
         case 'requestPushHeadTargets': {
           this.requireSelectedRepository(message.repositoryId);
           const repository = this.requireRepository(message.repositoryId);
@@ -370,7 +371,8 @@ export class WorkbenchController {
             cwd: fileURLToPath(repository.rootUri), timeoutMs: 30_000,
           });
           await this.options.postMessage({
-            type: 'pushHeadTargetsLoaded', requestId: message.requestId,
+            type: message.type === 'requestPullTargets' ? 'pullTargetsLoaded' : 'pushHeadTargetsLoaded',
+            requestId: message.requestId,
             repositoryId: message.repositoryId,
             remotes: result.stdout.toString('utf8').split(/\r?\n/u).filter(Boolean),
           });

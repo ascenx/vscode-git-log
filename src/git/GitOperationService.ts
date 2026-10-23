@@ -106,7 +106,13 @@ export function buildOperationArguments(
         ? ['fetch', validateToken(operation.remote, 'remote')]
         : ['fetch', '--all', '--prune'];
     case 'pull':
-      return ['pull'];
+      if (operation.remote !== undefined || operation.branch !== undefined) {
+        if (!operation.rebase || !operation.remote || !operation.branch) {
+          throw new Error('Pull with an explicit target requires rebase, a remote and a branch.');
+        }
+        return ['pull', '--rebase', validateToken(operation.remote, 'remote'), validateToken(operation.branch, 'branch')];
+      }
+      return operation.rebase ? ['pull', '--rebase'] : ['pull'];
     case 'pushHead':
       return [
         'push',
@@ -449,10 +455,10 @@ export class GitOperationService {
         if (operation.kind === 'deleteRemoteBranch') {
           await this.validateRemoteBranchDeletion(freshRepository, operation.remote, operation.branch);
         }
-        if (operation.kind === 'pushHead') {
+        if (operation.kind === 'pushHead' || (operation.kind === 'pull' && operation.remote !== undefined)) {
           const cwd = fileURLToPath(freshRepository.rootUri);
-          const remote = validateToken(operation.remote, 'push remote');
-          const branch = validateToken(operation.branch, 'push branch');
+          const remote = validateToken(operation.remote ?? '', 'remote');
+          const branch = validateToken(operation.branch ?? '', 'branch');
           const configured = await this.runner.run(['remote'], { cwd, timeoutMs: 30_000 });
           if (!configured.stdout.toString('utf8').split(/\r?\n/u).includes(remote)) {
             throw new Error(`Remote “${remote}” is not a configured remote.`);

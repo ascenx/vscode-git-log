@@ -128,7 +128,7 @@ interface WorkbenchState {
     | undefined;
 }
 
-type WorkbenchRequestScope = 'repositories' | 'log' | 'selection' | 'operation' | 'pushHeadTargets';
+type WorkbenchRequestScope = 'repositories' | 'log' | 'selection' | 'operation' | 'remoteBranchTargets';
 
 function requestScopeForMessage(message: WebviewToExtensionMessage): WorkbenchRequestScope | undefined {
   switch (message.type) {
@@ -145,7 +145,8 @@ function requestScopeForMessage(message: WebviewToExtensionMessage): WorkbenchRe
     case 'runOperation':
       return 'operation';
     case 'requestPushHeadTargets':
-      return 'pushHeadTargets';
+    case 'requestPullTargets':
+      return 'remoteBranchTargets';
     default:
       return undefined;
   }
@@ -466,7 +467,8 @@ export function App() {
     | { kind: 'createAndCheckoutBranch'; repositoryId: string; value: string }
     | undefined
   >();
-  const [pushHeadDialog, setPushHeadDialog] = useState<{
+  const [remoteBranchDialog, setRemoteBranchDialog] = useState<{
+    kind: 'pushHead' | 'pullRebase';
     repositoryId: string;
     requestId: string;
     remotes: string[];
@@ -649,17 +651,21 @@ export function App() {
   const selectedOperationInFlight = state.selectedRepositoryId
     ? state.operationRepositoryIds.has(state.selectedRepositoryId)
     : false;
-  const pushHeadOperation: GitOperationRequest | undefined = pushHeadDialog
-    ? { kind: 'pushHead', remote: pushHeadDialog.remote, branch: pushHeadDialog.branch.trim() }
+  const remoteBranchOperation: GitOperationRequest | undefined = remoteBranchDialog
+    ? {
+        ...(remoteBranchDialog.kind === 'pullRebase' ? { kind: 'pull' as const, rebase: true } : { kind: 'pushHead' as const }),
+        remote: remoteBranchDialog.remote, branch: remoteBranchDialog.branch.trim(),
+      }
     : undefined;
-  const canPushHead = Boolean(
-    pushHeadDialog && !pushHeadDialog.loading && !pushHeadDialog.error &&
-    pushHeadDialog.remotes.includes(pushHeadDialog.remote) &&
-    pushHeadDialog.repositoryId === state.selectedRepositoryId &&
+  const canSubmitRemoteBranch = Boolean(
+    remoteBranchDialog && !remoteBranchDialog.loading && !remoteBranchDialog.error &&
+    remoteBranchDialog.remotes.includes(remoteBranchDialog.remote) &&
+    remoteBranchDialog.repositoryId === state.selectedRepositoryId &&
     selectedRepository?.head && !selectedRepository.isBare && !selectedRepository.operationState &&
+    (remoteBranchDialog.kind === 'pushHead' || selectedRepository.currentBranch) &&
     !selectedOperationInFlight && parseWebviewMessage({
-      type: 'runOperation', requestId: pushHeadDialog.requestId,
-      repositoryId: pushHeadDialog.repositoryId, operation: pushHeadOperation,
+      type: 'runOperation', requestId: remoteBranchDialog.requestId,
+      repositoryId: remoteBranchDialog.repositoryId, operation: remoteBranchOperation,
     }),
   );
   const refsCollapsed = Boolean(
@@ -857,7 +863,7 @@ export function App() {
           setSquashOperation(undefined);
           setStashDialog(undefined);
           setAmendDialog(undefined);
-          setPushHeadDialog(undefined);
+          setRemoteBranchDialog(undefined);
           stashDialogRepository.current = undefined;
           pendingFiltersRef.current = undefined;
           lastWindowAnchorSignature.current = undefined;
@@ -912,8 +918,9 @@ export function App() {
           );
           break;
         case 'pushHeadTargetsLoaded':
+        case 'pullTargetsLoaded':
           requestScopeById.current.delete(message.requestId);
-          setPushHeadDialog((current) =>
+          setRemoteBranchDialog((current) =>
             current && current.requestId === message.requestId &&
             current.repositoryId === message.repositoryId &&
             selectedRepositoryIdRef.current === message.repositoryId
@@ -1050,8 +1057,13 @@ export function App() {
           ) {
             break;
           }
+          setRemoteBranchDialog((current) =>
+            current?.kind === 'pullRebase' &&
+            !message.repositories.find((repository) => repository.id === current.repositoryId)?.currentBranch
+              ? undefined : current,
+          );
           if (message.selectedRepositoryId && message.selectedRepositoryId !== selectedRepositoryIdRef.current) {
-            setPushHeadDialog(undefined);
+            setRemoteBranchDialog(undefined);
           }
           setState((current) => {
             const selectedRepositoryId = message.selectedRepositoryId ?? current.selectedRepositoryId;
@@ -1271,9 +1283,9 @@ export function App() {
               pendingFiltersRef.current = undefined;
             }
             const scope = requestScopeById.current.get(message.requestId);
-            if (scope === 'pushHeadTargets') {
+            if (scope === 'remoteBranchTargets') {
               requestScopeById.current.delete(message.requestId);
-              setPushHeadDialog((current) =>
+              setRemoteBranchDialog((current) =>
                 current?.requestId === message.requestId
                   ? { ...current, loading: false, error: message.message }
                   : current,
@@ -1511,7 +1523,7 @@ export function App() {
     setCommitRevealTarget(undefined);
     setContextMenu(undefined);
     setNamedOperation(undefined);
-    setPushHeadDialog(undefined);
+    setRemoteBranchDialog(undefined);
     setFilterPopup(undefined);
     setRefSearch('');
     activeSelectionRequest.current = undefined;
@@ -2002,13 +2014,16 @@ export function App() {
     setContextMenu(undefined);
   };
 
-  const openPushHead = (repositoryId: string): void => {
-    const targetsRequestId = requestId('push-head-targets');
-    setPushHeadDialog({
-      repositoryId, requestId: targetsRequestId, remotes: [],
+  const openRemoteBranchDialog = (repositoryId: string, kind: 'pushHead' | 'pullRebase'): void => {
+    const targetsRequestId = requestId('remote-branch-targets');
+    setRemoteBranchDialog({
+      kind, repositoryId, requestId: targetsRequestId, remotes: [],
       remote: '', branch: '', loading: true,
     });
-    send({ type: 'requestPushHeadTargets', requestId: targetsRequestId, repositoryId });
+    send({
+      type: kind === 'pullRebase' ? 'requestPullTargets' : 'requestPushHeadTargets',
+      requestId: targetsRequestId, repositoryId,
+    });
     setContextMenu(undefined);
   };
 
@@ -2074,7 +2089,7 @@ export function App() {
     } else if (event.key === 'Escape') {
       setContextMenu(undefined);
       setNamedOperation(undefined);
-      setPushHeadDialog(undefined);
+      setRemoteBranchDialog(undefined);
       setFilterPopup(undefined);
       setHistoryParentPicker(undefined);
     }
@@ -3435,12 +3450,30 @@ export function App() {
               >
                 Pull
               </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!selectedRepository?.currentBranch}
+                title="Pull and rebase onto the current branch's configured upstream"
+                onClick={() => runOperation({ kind: 'pull', rebase: true }, contextMenu.repositoryId)}
+              >
+                Pull (Rebase)
+              </button>
+              <button
+                type="button"
+                role="menuitem"
+                disabled={!selectedRepository?.currentBranch || selectedOperationInFlight}
+                title="Pull and rebase onto a specific remote branch"
+                onClick={() => openRemoteBranchDialog(contextMenu.repositoryId, 'pullRebase')}
+              >
+                Pull (Rebase) from…
+              </button>
               {selectedRepository?.head && !selectedRepository.currentBranch ? (
                 <button
                   type="button"
                   role="menuitem"
                   disabled={selectedOperationInFlight}
-                  onClick={() => openPushHead(contextMenu.repositoryId)}
+                  onClick={() => openRemoteBranchDialog(contextMenu.repositoryId, 'pushHead')}
                 >
                   Push HEAD…
                 </button>
@@ -4092,7 +4125,7 @@ export function App() {
                         role="menuitem"
                         disabled={selectedOperationInFlight}
                         title="Push the current HEAD to a remote branch"
-                        onClick={() => openPushHead(contextMenu.repositoryId)}
+                        onClick={() => openRemoteBranchDialog(contextMenu.repositoryId, 'pushHead')}
                       >
                         Push HEAD…
                       </button>
@@ -4465,30 +4498,30 @@ export function App() {
         </div>
       ) : null}
 
-      {pushHeadDialog ? (
+      {remoteBranchDialog ? (
         <div className="operation-dialog-backdrop">
           <form
             className="operation-dialog"
             role="dialog"
             aria-modal="true"
-            aria-label="Push HEAD"
+            aria-label={remoteBranchDialog.kind === 'pullRebase' ? 'Pull (Rebase) from…' : 'Push HEAD'}
             onSubmit={(event) => {
               event.preventDefault();
-              if (!canPushHead || !pushHeadOperation) return;
-              runOperation(pushHeadOperation, pushHeadDialog.repositoryId);
-              setPushHeadDialog(undefined);
+              if (!canSubmitRemoteBranch || !remoteBranchOperation) return;
+              runOperation(remoteBranchOperation, remoteBranchDialog.repositoryId);
+              setRemoteBranchDialog(undefined);
             }}
           >
-            <strong>Push HEAD</strong>
+            <strong>{remoteBranchDialog.kind === 'pullRebase' ? 'Pull (Rebase) from…' : 'Push HEAD'}</strong>
             <label>
               <span>Remote</span>
               <select
                 aria-label="Remote"
-                value={pushHeadDialog.remote}
-                disabled={pushHeadDialog.loading || selectedOperationInFlight}
-                onChange={(event) => setPushHeadDialog({ ...pushHeadDialog, remote: event.target.value })}
+                value={remoteBranchDialog.remote}
+                disabled={remoteBranchDialog.loading || selectedOperationInFlight}
+                onChange={(event) => setRemoteBranchDialog({ ...remoteBranchDialog, remote: event.target.value })}
               >
-                {pushHeadDialog.remotes.map((remote) => <option key={remote} value={remote}>{remote}</option>)}
+                {remoteBranchDialog.remotes.map((remote) => <option key={remote} value={remote}>{remote}</option>)}
               </select>
             </label>
             <label>
@@ -4496,20 +4529,24 @@ export function App() {
               <input
                 autoFocus
                 aria-label="Target branch"
-                value={pushHeadDialog.branch}
+                value={remoteBranchDialog.branch}
                 disabled={selectedOperationInFlight}
-                onChange={(event) => setPushHeadDialog({ ...pushHeadDialog, branch: event.target.value })}
+                onChange={(event) => setRemoteBranchDialog({ ...remoteBranchDialog, branch: event.target.value })}
               />
             </label>
-            {pushHeadDialog.loading ? <span>Loading remotes…</span> : null}
-            {pushHeadDialog.error ? <span role="alert">{pushHeadDialog.error}</span> : null}
-            {!pushHeadDialog.loading && !pushHeadDialog.error && !pushHeadDialog.remotes.length
+            {remoteBranchDialog.loading ? <span>Loading remotes…</span> : null}
+            {remoteBranchDialog.error ? <span role="alert">{remoteBranchDialog.error}</span> : null}
+            {!remoteBranchDialog.loading && !remoteBranchDialog.error && !remoteBranchDialog.remotes.length
               ? <span>No remotes configured.</span> : null}
-            {pushHeadDialog.remote && pushHeadDialog.branch.trim()
-              ? <span>HEAD → {pushHeadDialog.remote}/{pushHeadDialog.branch.trim()}</span> : null}
+            {remoteBranchDialog.remote && remoteBranchDialog.branch.trim()
+              ? <span>{remoteBranchDialog.kind === 'pullRebase'
+                  ? `git pull --rebase ${remoteBranchDialog.remote} ${remoteBranchDialog.branch.trim()}`
+                  : `HEAD → ${remoteBranchDialog.remote}/${remoteBranchDialog.branch.trim()}`}</span> : null}
             <div className="operation-dialog-actions">
-              <button type="button" onClick={() => setPushHeadDialog(undefined)}>Cancel</button>
-              <button type="submit" disabled={!canPushHead}>Push</button>
+              <button type="button" onClick={() => setRemoteBranchDialog(undefined)}>Cancel</button>
+              <button type="submit" disabled={!canSubmitRemoteBranch}>
+                {remoteBranchDialog.kind === 'pullRebase' ? 'Pull (Rebase)' : 'Push'}
+              </button>
             </div>
           </form>
         </div>
