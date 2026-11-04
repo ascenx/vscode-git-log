@@ -3376,25 +3376,30 @@ describe('WorkbenchApp', () => {
     });
     fireEvent.click(screen.getByRole('button', { name: 'Branch' }));
     const popup = screen.getByRole('dialog', { name: 'branch filter' });
-    fireEvent.click(within(popup).getByRole('checkbox', { name: 'All' }));
+    // Resolve labels once instead of repeatedly scanning hundreds of accessible names.
+    const all = within(popup).getByLabelText('All');
+    const head = within(popup).getByLabelText('HEAD (local)');
+    const firstBranch = within(popup).getByLabelText('branch-0');
+    const secondBranch = within(popup).getByLabelText('branch-1');
+    fireEvent.click(all);
     expect(parseWebviewMessage(postedMessages.at(-1))).toBeDefined();
     expect(postedMessages.at(-1)).toMatchObject({ filters: { allBranches: true, branches: [] } });
-    expect(within(popup).getByRole('checkbox', { name: 'HEAD (local)' })).not.toBeChecked();
+    expect(head).not.toBeChecked();
 
-    fireEvent.click(within(popup).getByRole('checkbox', { name: 'branch-0' }));
+    fireEvent.click(firstBranch);
     expect(parseWebviewMessage(postedMessages.at(-1))).toBeDefined();
     expect(postedMessages.at(-1)).toMatchObject({
       filters: { allBranches: true, branches: ['refs/heads/branch-0'] },
     });
-    expect(within(popup).getByRole('checkbox', { name: 'branch-0' })).not.toBeChecked();
-    expect(within(popup).getByRole('checkbox', { name: 'branch-1' })).toBeChecked();
+    expect(firstBranch).not.toBeChecked();
+    expect(secondBranch).toBeChecked();
 
-    fireEvent.click(within(popup).getByRole('checkbox', { name: 'HEAD (local)' }));
+    fireEvent.click(head);
     expect(postedMessages.at(-1)).toMatchObject({ filters: { allBranches: false, branches: [] } });
-    expect(within(popup).getByRole('checkbox', { name: 'HEAD (local)' })).toBeChecked();
-    expect(within(popup).getByRole('checkbox', { name: 'branch-1' })).not.toBeChecked();
+    expect(head).toBeChecked();
+    expect(secondBranch).not.toBeChecked();
 
-    fireEvent.click(within(popup).getByRole('checkbox', { name: 'All' }));
+    fireEvent.click(all);
     fireEvent.click(within(screen.getByRole('navigation', { name: 'Git references' }))
       .getByRole('button', { name: 'branch-0' }));
     expect(postedMessages).toContainEqual(expect.objectContaining({

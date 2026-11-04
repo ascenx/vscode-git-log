@@ -1257,8 +1257,9 @@ describe('GitOperationService', () => {
     const peer = await mkdtemp(join(tmpdir(), 'git-operation-rebase-peer-'));
     temporaryDirectories.push(remote, peer);
     await git(remote, 'init', '--bare');
-    await git(fixture.path, 'remote', 'add', 'team', remote);
-    await git(fixture.path, 'push', '-u', 'team', 'HEAD:refs/heads/integration');
+    // Keep the upstream distinct from team/origin: newer Git rejects overlapping remote names.
+    await git(fixture.path, 'remote', 'add', 'upstream', remote);
+    await git(fixture.path, 'push', '-u', 'upstream', 'HEAD:refs/heads/integration');
     await execFileAsync('git', ['clone', '-b', 'integration', remote, peer]);
     if (explicit) {
       await git(fixture.path, 'remote', 'add', 'team/origin', remote);
@@ -1280,9 +1281,9 @@ describe('GitOperationService', () => {
     expect(await git(fixture.path, 'rev-parse', 'HEAD^')).toBe(remoteTip);
     expect(await git(fixture.path, 'rev-parse', 'HEAD')).not.toBe(localTip);
     expect(await git(fixture.path, 'log', '-1', '--format=%s')).toBe('local change');
-    expect(await git(fixture.path, 'rev-list', '--count', '--merges', 'team/integration..HEAD')).toBe('0');
+    expect(await git(fixture.path, 'rev-list', '--count', '--merges', 'upstream/integration..HEAD')).toBe('0');
     expect(await git(fixture.path, 'branch', '--show-current')).toBe('main');
-    expect(await git(fixture.path, 'rev-parse', '--abbrev-ref', '@{upstream}')).toBe('team/integration');
+    expect(await git(fixture.path, 'rev-parse', '--abbrev-ref', '@{upstream}')).toBe('upstream/integration');
     await expect(stat(join(fixture.path, 'remote.txt'))).resolves.toBeDefined();
     await expect(stat(join(fixture.path, 'local.txt'))).resolves.toBeDefined();
   });
