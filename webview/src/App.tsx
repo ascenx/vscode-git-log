@@ -79,7 +79,9 @@ function filtersEqual(left: LogFilters, right: LogFilters): boolean {
 }
 
 function operationStateLabel(state: NonNullable<RepositorySummary['operationState']>): string {
-  return state === 'rebase' ? 'Rebasing' : state;
+  if (state === 'rebase') return 'Rebasing';
+  if (state === 'merge') return 'Merging';
+  return state;
 }
 
 interface WorkbenchState {
@@ -3079,6 +3081,54 @@ export function App() {
                   type="button"
                   disabled={selectedOperationInFlight}
                   onClick={() => runOperation({ kind: 'rebaseAbort' })}
+                >
+                  Abort
+                </button>
+              </div>
+            </div>
+          ) : null}
+          {selectedRepository?.operationState === 'merge' ? (
+            <div
+              className="rebase-status-row merge-status-row"
+              role="toolbar"
+              aria-label="Merge in progress"
+            >
+              <button
+                className="operation-badge"
+                type="button"
+                aria-label="Open Source Control"
+                title="Open Source Control"
+                onClick={() =>
+                  send({
+                    type: 'openSourceControl',
+                    requestId: requestId('source-control'),
+                  })
+                }
+              >
+                Merging
+              </button>
+              <div className="rebase-actions" role="group" aria-label="Merge actions">
+                <button
+                  className="rebase-action-button rebase-continue-button"
+                  type="button"
+                  disabled={
+                    selectedOperationInFlight ||
+                    Boolean(selectedRepository.hasUnresolvedConflicts)
+                  }
+                  title={
+                    selectedRepository.hasUnresolvedConflicts
+                      ? 'Resolve all conflicts before continuing the merge'
+                      : 'Continue merge'
+                  }
+                  onClick={() => runOperation({ kind: 'mergeContinue' })}
+                >
+                  Continue
+                </button>
+                <button
+                  className="rebase-action-button"
+                  type="button"
+                  disabled={selectedOperationInFlight}
+                  onClick={() => runOperation({ kind: 'mergeAbort' })}
                 >
                   Abort
                 </button>

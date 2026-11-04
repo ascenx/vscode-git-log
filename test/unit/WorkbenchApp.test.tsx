@@ -1546,6 +1546,96 @@ describe('WorkbenchApp', () => {
     expect(screen.getByRole('button', { name: 'Continue' })).toBeEnabled();
   });
 
+  it('shows merge controls and disables continue while conflicts remain', () => {
+    const repository = {
+      id: 'repo-merge-conflicts',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      operationState: 'merge' as const,
+      hasUnresolvedConflicts: true,
+    };
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-merge-conflicts',
+            repositories: [repository],
+            selectedRepositoryId: repository.id,
+            pageSize: 500,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+
+    const mergeRow = screen.getByRole('toolbar', { name: 'Merge in progress' });
+    expect(within(mergeRow).getByRole('button', { name: 'Open Source Control' })).toHaveTextContent(
+      'Merging',
+    );
+    const actions = within(mergeRow).getByRole('group', { name: 'Merge actions' });
+    const continueButton = within(actions).getByRole('button', { name: 'Continue' });
+    const abortButton = within(actions).getByRole('button', { name: 'Abort' });
+    expect(continueButton).toBeDisabled();
+    expect(abortButton).toBeEnabled();
+
+    fireEvent.click(abortButton);
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'runOperation',
+        operation: { kind: 'mergeAbort' },
+      }),
+    );
+  });
+
+  it('dispatches merge continue after conflicts are resolved', () => {
+    const repository = {
+      id: 'repo-merge-continue',
+      rootUri: 'file:///workspace/project',
+      gitDirUri: 'file:///workspace/project/.git',
+      displayName: 'project',
+      isBare: false,
+      operationState: 'merge' as const,
+      hasUnresolvedConflicts: false,
+    };
+    render(<App />);
+    act(() => {
+      window.dispatchEvent(
+        new MessageEvent('message', {
+          data: {
+            type: 'initialize',
+            requestId: 'ready-merge-continue',
+            repositories: [repository],
+            selectedRepositoryId: repository.id,
+            pageSize: 500,
+            layout: {
+              refsWidth: 220,
+              filesWidth: 320,
+              detailsHeight: 156,
+              filesViewMode: 'tree',
+            },
+          },
+        }),
+      );
+    });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Continue' }));
+    expect(postedMessages).toContainEqual(
+      expect.objectContaining({
+        type: 'runOperation',
+        operation: { kind: 'mergeContinue' },
+      }),
+    );
+  });
+
   it('keeps write actions blocked throughout an operation refresh and rejects rapid duplicates', () => {
     render(<App />);
     act(() => {

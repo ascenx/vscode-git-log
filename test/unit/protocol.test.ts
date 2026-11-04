@@ -231,7 +231,13 @@ describe('parseWebviewMessage', () => {
         operation: { kind: 'reset', hash: 'abcdef1', mode: 'hard' },
       }),
     ).toMatchObject({ type: 'runOperation', operation: { kind: 'reset', mode: 'hard' } });
-    for (const kind of ['rebaseContinue', 'rebaseSkip', 'rebaseAbort']) {
+    for (const kind of [
+      'rebaseContinue',
+      'rebaseSkip',
+      'rebaseAbort',
+      'mergeContinue',
+      'mergeAbort',
+    ]) {
       expect(
         protocol.parseWebviewMessage({
           type: 'runOperation',

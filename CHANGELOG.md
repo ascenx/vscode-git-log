@@ -7,6 +7,7 @@ All notable changes to Git Log are documented in this file.
 ### Added
 
 - Added `All` to the Branch filter to select Local, Remote, and Tag references together, and `HEAD (local)` to show the current HEAD's history, including detached HEAD ([#6](https://github.com/ascenx/vscode-git-log/issues/6)). Other log filters are preserved.
+- Added a `Merging` status row with `Continue` and `Abort` actions for merge conflicts. `Continue` stays disabled until conflicts are resolved, and `Abort` requires confirmation.
 
 ### Fixed
 

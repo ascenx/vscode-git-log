@@ -567,6 +567,14 @@ describe('GitOperationService', () => {
       'rebase',
       '--abort',
     ]);
+    expect(operationModule.buildOperationArguments({ kind: 'mergeContinue' })).toEqual([
+      'merge',
+      '--continue',
+    ]);
+    expect(operationModule.buildOperationArguments({ kind: 'mergeAbort' })).toEqual([
+      'merge',
+      '--abort',
+    ]);
   });
 
   it('requires explicit confirmation before deleting tags or remote branches', () => {
@@ -825,6 +833,9 @@ describe('GitOperationService', () => {
     expect(
       operationModule.getOperationConfirmation(repository, { kind: 'rebaseAbort' }),
     ).toMatchObject({ destructive: true, confirmLabel: 'Abort Rebase' });
+    expect(
+      operationModule.getOperationConfirmation(repository, { kind: 'mergeAbort' }),
+    ).toMatchObject({ destructive: true, confirmLabel: 'Abort Merge' });
     expect(operationModule.getOperationConfirmation(repository, { kind: 'fetch' })).toBeUndefined();
   });
 
@@ -890,6 +901,63 @@ describe('GitOperationService', () => {
     await expect(
       service.run(repository, { kind: 'checkout', ref: 'feature' }),
     ).rejects.toThrow('rebase is in progress');
+  });
+
+  it('allows only merge controls while a merge is in progress', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService({ run } as unknown as GitRunner, {
+      inspectRepository: (candidate) =>
+        Promise.resolve({
+          ...candidate,
+          operationState: 'merge',
+          hasUnresolvedConflicts: false,
+        }),
+    });
+
+    for (const operation of [{ kind: 'mergeContinue' }, { kind: 'mergeAbort' }] as const) {
+      await service.run(repository, operation, { confirm: () => Promise.resolve(true) });
+    }
+
+    expect(run.mock.calls.map(([args]) => args)).toEqual([
+      ['merge', '--continue'],
+      ['merge', '--abort'],
+    ]);
+    await expect(service.run(repository, { kind: 'checkout', ref: 'feature' })).rejects.toThrow(
+      'merge is in progress',
+    );
+  });
+
+  it('rejects merge controls after the merge has ended', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService(
+      { run } as unknown as GitRunner,
+      passthroughInspection,
+    );
+
+    await expect(service.run(repository, { kind: 'mergeContinue' })).rejects.toThrow(
+      'No Git merge is in progress',
+    );
+    expect(run).not.toHaveBeenCalled();
+  });
+
+  it('rejects merge continue while conflicts remain unresolved', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const run = vi.fn().mockResolvedValue(successfulResult);
+    const service = new GitOperationService({ run } as unknown as GitRunner, {
+      inspectRepository: (candidate) =>
+        Promise.resolve({
+          ...candidate,
+          operationState: 'merge',
+          hasUnresolvedConflicts: true,
+        }),
+    });
+
+    await expect(service.run(repository, { kind: 'mergeContinue' })).rejects.toThrow(
+      'Resolve all conflicts before continuing the merge',
+    );
+    expect(run).not.toHaveBeenCalled();
   });
 
   it('rejects rebase controls after the rebase has ended', async () => {

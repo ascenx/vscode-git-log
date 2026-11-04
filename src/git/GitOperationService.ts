@@ -49,11 +49,13 @@ function validateCommitMessage(value: string, label: string): string {
   return value;
 }
 
-function isRebaseControlOperation(operation: GitOperationRequest): boolean {
+function isSequencedControlOperation(operation: GitOperationRequest): boolean {
   return (
     operation.kind === 'rebaseContinue' ||
     operation.kind === 'rebaseSkip' ||
-    operation.kind === 'rebaseAbort'
+    operation.kind === 'rebaseAbort' ||
+    operation.kind === 'mergeContinue' ||
+    operation.kind === 'mergeAbort'
   );
 }
 
@@ -147,6 +149,10 @@ export function buildOperationArguments(
       return ['rebase', '--skip'];
     case 'rebaseAbort':
       return ['rebase', '--abort'];
+    case 'mergeContinue':
+      return ['merge', '--continue'];
+    case 'mergeAbort':
+      return ['merge', '--abort'];
     case 'reset':
       return ['reset', `--${operation.mode}`, validateHash(operation.hash), '--'];
     case 'renameBranch':
@@ -248,6 +254,14 @@ export function getOperationConfirmation(
       title: 'Abort the current rebase?',
       detail: `Repository “${repository.displayName}” will stop rebasing and restore the branch to its pre-rebase state.`,
       confirmLabel: 'Abort Rebase',
+      destructive: true,
+    };
+  }
+  if (operation.kind === 'mergeAbort') {
+    return {
+      title: 'Abort the current merge?',
+      detail: `Repository “${repository.displayName}” will stop merging and restore the branch to its pre-merge state.`,
+      confirmLabel: 'Abort Merge',
       destructive: true,
     };
   }
@@ -436,21 +450,35 @@ export class GitOperationService {
       .then(async () => {
         const freshRepository = await this.inspect(repository);
         if (!freshRepository) throw new Error(`Repository “${repository.displayName}” is unavailable.`);
-        const isRebaseControl = isRebaseControlOperation(operation);
+        const isSequencedControl = isSequencedControlOperation(operation);
+        const operationMatchesControl =
+          (freshRepository.operationState === 'rebase' &&
+            (operation.kind === 'rebaseContinue' ||
+              operation.kind === 'rebaseSkip' ||
+              operation.kind === 'rebaseAbort')) ||
+          (freshRepository.operationState === 'merge' &&
+            (operation.kind === 'mergeContinue' || operation.kind === 'mergeAbort'));
         if (
           freshRepository.operationState &&
           operation.kind !== 'fetch' &&
-          !(freshRepository.operationState === 'rebase' && isRebaseControl)
+          !(isSequencedControl && operationMatchesControl)
         ) {
           throw new Error(
             `A Git ${freshRepository.operationState} is in progress; finish or abort it first.`,
           );
         }
-        if (!freshRepository.operationState && isRebaseControl) {
-          throw new Error('No Git rebase is in progress.');
+        if (!freshRepository.operationState && isSequencedControl) {
+          throw new Error(
+            operation.kind.startsWith('rebase')
+              ? 'No Git rebase is in progress.'
+              : 'No Git merge is in progress.',
+          );
         }
         if (operation.kind === 'rebaseContinue' && freshRepository.hasUnresolvedConflicts) {
           throw new Error('Resolve all conflicts before continuing the rebase.');
+        }
+        if (operation.kind === 'mergeContinue' && freshRepository.hasUnresolvedConflicts) {
+          throw new Error('Resolve all conflicts before continuing the merge.');
         }
         if (operation.kind === 'deleteRemoteBranch') {
           await this.validateRemoteBranchDeletion(freshRepository, operation.remote, operation.branch);
@@ -525,7 +553,7 @@ export class GitOperationService {
           await this.runner.run(buildOperationArguments(preparedOperation, forceSourceHash), {
             cwd: fileURLToPath(freshRepository.rootUri),
             timeoutMs: 10 * 60_000,
-            ...(preparedOperation.kind === 'rebaseContinue'
+            ...(preparedOperation.kind === 'rebaseContinue' || preparedOperation.kind === 'mergeContinue'
               ? { env: { GIT_EDITOR: 'true' } }
               : {}),
           });

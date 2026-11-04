@@ -164,6 +164,8 @@ export type GitOperationRequest =
   | { kind: 'rebaseContinue' }
   | { kind: 'rebaseSkip' }
   | { kind: 'rebaseAbort' }
+  | { kind: 'mergeContinue' }
+  | { kind: 'mergeAbort' }
   | { kind: 'reset'; hash: string; mode: 'soft' | 'mixed' | 'hard' }
   | { kind: 'renameBranch'; oldName: string; newName: string }
   | { kind: 'deleteBranch'; name: string; force: boolean }
@@ -534,6 +536,8 @@ function isGitOperationRequest(value: unknown): value is GitOperationRequest {
     case 'rebaseContinue':
     case 'rebaseSkip':
     case 'rebaseAbort':
+    case 'mergeContinue':
+    case 'mergeAbort':
       return true;
     case 'reset':
       return isHash(value.hash) && ['soft', 'mixed', 'hard'].includes(String(value.mode));
