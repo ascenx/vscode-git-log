@@ -2,7 +2,7 @@ let commitDateFormatter: Intl.DateTimeFormat | undefined;
 
 export function formatCommitDate(timestamp: number): string {
   if (!timestamp) return '';
-  commitDateFormatter ??= new Intl.DateTimeFormat(undefined, {
+  commitDateFormatter ??= new Intl.DateTimeFormat('en-US', {
     month: 'short',
     day: 'numeric',
     hour: '2-digit',

@@ -142,6 +142,39 @@ function initializeCommitRangeFixture() {
 }
 
 describe('WorkbenchApp', () => {
+  it('exposes the actual changed-files width so filters can reserve global toolbar space', () => {
+    initializeCommitRangeFixture();
+    const shell = document.querySelector<HTMLElement>('.workbench-shell');
+    expect(shell?.style.getPropertyValue('--files-pane-width')).toBe('320px');
+    const divider = screen.getByRole('separator', { name: 'Resize changed files pane' });
+    for (let index = 0; index < 10; index++) {
+      fireEvent.keyDown(divider, { key: 'ArrowRight' });
+    }
+    expect(shell?.style.getPropertyValue('--files-pane-width')).toBe('220px');
+    fireEvent.click(screen.getByRole('button', { name: 'Collapse changed files pane' }));
+    expect(shell?.style.getPropertyValue('--files-pane-width')).toBe('0px');
+  });
+
+  it('switches to branch statistics and restores the commit layout when closed', () => {
+    initializeCommitRangeFixture();
+    fireEvent.click(screen.getByText('newest commit'));
+    const files = screen.getByRole('region', { name: 'Changed files' });
+    fireEvent.click(screen.getByRole('button', { name: 'Statistics' }));
+    expect(screen.getByRole('tab', { name: 'Last 7 Days' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'All' })).toBeInTheDocument();
+    expect(screen.getByRole('navigation', { name: 'Git references' })).toBeVisible();
+    expect(files).not.toBeVisible();
+    expect(screen.queryByRole('grid', { name: 'Commit log' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Expand changed files pane' })).toBeDisabled();
+    postedMessages.length = 0;
+    fireEvent.keyDown(screen.getByRole('region', { name: 'Branch statistics view' }), { key: 'c', ctrlKey: true });
+    expect(postedMessages.some((message) => message.type === 'copyToClipboard')).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Back to commits' }));
+    expect(screen.getByRole('grid', { name: 'Commit log' })).toBeVisible();
+    expect(screen.getByRole('region', { name: 'Changed files' })).toBeVisible();
+    expect(screen.queryByRole('tab', { name: 'Last 30 Days' })).not.toBeInTheDocument();
+  });
+
   it('marks structural graph context rows separately from filter matches', () => {
     const { commits, middle } = initializeCommitRangeFixture();
 

@@ -1,4 +1,7 @@
 import type {
+  BranchStatistics,
+  StatisticsPeriod,
+  StatisticsDateRange,
   ChangedFile,
   CommitDetails,
   CommitSummary,
@@ -60,6 +63,15 @@ export interface PersistedWorkbenchState {
 }
 
 export type WebviewToExtensionMessage =
+  | { type: 'cancelBranchStatistics'; requestId: string; repositoryId: string }
+  | {
+      type: 'requestBranchStatistics';
+      requestId: string;
+      repositoryId: string;
+      filters: LogFilters;
+      period: StatisticsPeriod;
+      dateRange?: StatisticsDateRange;
+    }
   | { type: 'ready'; requestId: string }
   | { type: 'selectRepository'; requestId: string; repositoryId: string }
   | {
@@ -180,6 +192,12 @@ export type GitOperationRequest =
 export type ErrorRecoveryAction = { kind: 'forceDeleteBranch'; branch: string };
 
 export type ExtensionToWebviewMessage =
+  | {
+      type: 'branchStatisticsLoaded';
+      requestId: string;
+      repositoryId: string;
+      statistics: BranchStatistics;
+    }
   | {
       type: 'initialize';
       requestId: string;
@@ -357,6 +375,12 @@ function isLayout(value: unknown): value is WorkbenchLayout {
         new Set(value.hiddenColumns).size === value.hiddenColumns.length &&
         value.hiddenColumns.every((column) => ['refs', 'author', 'date'].includes(String(column)))))
   );
+}
+
+function isStatisticsDateRange(value: unknown): value is StatisticsDateRange {
+  return isRecord(value) && [value.dateFrom, value.dateTo].every((timestamp) =>
+    typeof timestamp === 'number' && Number.isSafeInteger(timestamp) &&
+    timestamp >= 0 && timestamp <= MAX_UNIX_SECONDS) && Number(value.dateFrom) <= Number(value.dateTo);
 }
 
 function isFilters(value: unknown): value is LogFilters {
@@ -619,6 +643,14 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
             parent: value.parent,
           }
         : undefined;
+    case 'requestBranchStatistics':
+      return hasRepository(value) && isFilters(value.filters) &&
+        (value.dateRange === undefined || isStatisticsDateRange(value.dateRange)) &&
+        (value.period === 'today' || value.period === '7d' || value.period === '30d' || value.period === 'all')
+        ? { type: value.type, requestId: value.requestId, repositoryId: value.repositoryId,
+            filters: value.filters, period: value.period,
+            ...(value.dateRange === undefined ? {} : { dateRange: value.dateRange as StatisticsDateRange }) }
+        : undefined;
     case 'requestLogPage':
       return hasRepository(value) &&
         Number.isSafeInteger(value.skip) &&
@@ -673,6 +705,7 @@ export function parseWebviewMessage(value: unknown): WebviewToExtensionMessage |
           }
         : undefined;
     case 'requestStashState':
+    case 'cancelBranchStatistics':
     case 'requestPushHeadTargets':
     case 'requestPullTargets':
       return hasRepository(value)

@@ -139,7 +139,7 @@ export class CurrentLineBlameController {
     message: string,
   ): void {
     const now = this.host.now();
-    this.host.render(editor, formatBlame(blame, message, now, this.host.locale));
+    this.host.render(editor, formatBlame(blame, message, now, 'en-US'));
     this.clearPresentationTimer();
     if (blame.committed) return;
 
@@ -191,7 +191,6 @@ export class CurrentLineBlameController {
 
       const now = this.host.now();
       if (!blame.committed) {
-        const isChinese = this.host.locale.toLowerCase().startsWith('zh');
         const editTime =
           editor.editTime ?? this.uncommittedEditTimes.get(editor.key) ?? now;
         this.uncommittedEditTimes.set(editor.key, editTime);
@@ -202,10 +201,10 @@ export class CurrentLineBlameController {
         }
         blame = {
           ...blame,
-          authorName: context.repository.userName?.trim() || (isChinese ? '你' : 'You'),
+          authorName: context.repository.userName?.trim() || 'You',
           authorEmail: context.repository.userEmail?.trim() ?? '',
           authorTime: Math.floor(editTime / 1000),
-          subject: isChinese ? '未提交的更改' : 'Uncommitted changes',
+          subject: 'Uncommitted changes',
         };
       }
 

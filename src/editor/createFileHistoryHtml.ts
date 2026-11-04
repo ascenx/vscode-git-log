@@ -40,7 +40,7 @@ function renderStats(entry: HistoryEntry): string {
 }
 
 function renderEntry(entry: HistoryEntry, selected: boolean): string {
-  const timestamp = entry.commitTime > 0 ? new Date(entry.commitTime * 1000).toLocaleString() : '';
+  const timestamp = entry.commitTime > 0 ? new Date(entry.commitTime * 1000).toLocaleString('en-US') : '';
   const rename = entry.oldPath && entry.oldPath !== entry.path
     ? `<div class="history-rename">${escapeHtml(entry.oldPath)} → ${escapeHtml(entry.path)}</div>`
     : '';
@@ -457,7 +457,7 @@ export function createFileHistoryHtml(options: {
         if (entry.additions !== undefined) { const add = document.createElement('span'); add.className = 'history-additions'; add.textContent = '+' + entry.additions; stats.append(add); }
         if (entry.deletions !== undefined) { const del = document.createElement('span'); del.className = 'history-deletions'; del.textContent = '−' + entry.deletions; stats.append(del); }
       }
-      const meta = document.createElement('span'); meta.className = 'history-meta'; meta.textContent = entry.authorName + ' · ' + new Date(entry.commitTime * 1000).toLocaleString() + ' · ' + entry.hash.slice(0, 8);
+      const meta = document.createElement('span'); meta.className = 'history-meta'; meta.textContent = entry.authorName + ' · ' + new Date(entry.commitTime * 1000).toLocaleString('en-US') + ' · ' + entry.hash.slice(0, 8);
       button.append(subject, stats, meta);
       if (entry.oldPath && entry.oldPath !== entry.path) {
         const rename = document.createElement('span'); rename.className = 'history-rename'; rename.textContent = entry.oldPath + ' → ' + entry.path; button.append(rename);

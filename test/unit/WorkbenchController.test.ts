@@ -48,6 +48,112 @@ async function createRepository(): Promise<string> {
 }
 
 describe('WorkbenchController', () => {
+  it('rejects superseded statistics and cancels a query when its view closes', async () => {
+    const repository = await createRepository();
+    const runner = new GitRunner();
+    const messages: ExtensionToWebviewMessage[] = [];
+    const { WorkbenchController } = await import('../../src/webview/WorkbenchController');
+    const { BranchStatisticsService } = await import('../../src/git/BranchStatisticsService');
+    const empty = await new BranchStatisticsService(runner).getStatistics(repository, { revisions: [], period: 'today' });
+    const controller = new WorkbenchController({
+      workspaceRoots: [repository], gitService: new GitService(runner), gitRunner: runner,
+      scanDepth: 0, initialPageSize: 200, pageSize: 500,
+      initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+      postMessage(message) { messages.push(message); return Promise.resolve(true); },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'ready' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    if (initialized?.type !== 'initialize' || !initialized.selectedRepositoryId) throw new Error('Missing repository');
+    const repositoryId = initialized.selectedRepositoryId;
+    const spy = vi.spyOn(BranchStatisticsService.prototype, 'getStatistics');
+    try {
+      for (const action of ['supersede', 'cancel', 'dispose'] as const) {
+        let release!: () => void;
+        let started!: () => void;
+        const gate = new Promise<void>((resolve) => { release = resolve; });
+        const start = new Promise<void>((resolve) => { started = resolve; });
+        let signal: AbortSignal | undefined;
+        spy.mockImplementationOnce(async (_cwd, query) => {
+          signal = query.signal;
+          started();
+          await gate;
+          return empty;
+        });
+        const requestId = `statistics-${action}`;
+        const pending = controller.handleMessage({ type: 'requestBranchStatistics', requestId, repositoryId,
+          period: 'today', filters: { text: '', branches: [], authors: [], paths: [] } });
+        await start;
+        if (action === 'supersede') {
+          await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'statistics-latest', repositoryId,
+            period: '7d', filters: { text: '', branches: [], authors: [], paths: [] } });
+        } else if (action === 'cancel') {
+          await controller.handleMessage({ type: 'cancelBranchStatistics', requestId, repositoryId });
+        } else controller.dispose();
+        expect(signal?.aborted).toBe(true);
+        release();
+        await pending;
+        expect(messages.some((message) => message.requestId === requestId)).toBe(false);
+      }
+      expect(messages.find((message) => message.requestId === 'statistics-latest')).toMatchObject({ type: 'branchStatisticsLoaded' });
+    } finally {
+      spy.mockRestore();
+      controller.dispose();
+    }
+  });
+
+  it('loads statistics for the selected ref independently of other log filters', async () => {
+    const repository = await createRepository();
+    await execFileAsync('git', ['branch', 'feature'], { cwd: repository });
+    const runner = new GitRunner();
+    const messages: ExtensionToWebviewMessage[] = [];
+    const { WorkbenchController } = await import('../../src/webview/WorkbenchController');
+    const controller = new WorkbenchController({
+      workspaceRoots: [repository], gitService: new GitService(runner), gitRunner: runner,
+      scanDepth: 0, initialPageSize: 200, pageSize: 500,
+      initialLayout: { refsWidth: 220, filesWidth: 320, detailsHeight: 156, filesViewMode: 'tree' },
+      postMessage(message) { messages.push(message); return Promise.resolve(true); },
+      persistLayout: () => Promise.resolve(),
+    });
+    await controller.handleMessage({ type: 'ready', requestId: 'stats-ready' });
+    const initialized = messages.find((message) => message.type === 'initialize');
+    if (initialized?.type !== 'initialize' || !initialized.selectedRepositoryId) throw new Error('Missing repository');
+    const repositoryId = initialized.selectedRepositoryId;
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats', repositoryId,
+      period: '30d', filters: { text: 'does not match', branches: ['refs/heads/feature'],
+        authors: ['nobody'], paths: ['missing'], dateTo: 1 } });
+    expect(messages.find((message) => message.type === 'branchStatisticsLoaded')).toMatchObject({
+      requestId: 'stats', repositoryId, statistics: { totals: { commits: 1, additions: 1 } },
+    });
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats-client-range', repositoryId,
+      period: 'today', dateRange: { dateFrom: 0, dateTo: 1 },
+      filters: { text: '', branches: ['refs/heads/feature'], authors: [], paths: [] } });
+    expect(messages.find((message) => message.requestId === 'stats-client-range')).toMatchObject({
+      type: 'branchStatisticsLoaded', statistics: { dateFrom: 0, dateTo: 1, totals: { commits: 0 } },
+    });
+    await execFileAsync('git', ['-c', 'user.name=Alice', '-c', 'user.email=alice@example.com',
+      'commit', '--allow-empty', '-m', 'new head'], { cwd: repository });
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats-head', repositoryId,
+      period: '30d', filters: { text: '', branches: [], authors: [], paths: [] } });
+    expect(messages.find((message) => message.requestId === 'stats-head')).toMatchObject({
+      type: 'branchStatisticsLoaded', statistics: { totals: { commits: 2 } },
+    });
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats-all', repositoryId,
+      period: '30d', filters: { text: '', branches: [], allBranches: true, authors: [], paths: [] } });
+    expect(messages.find((message) => message.requestId === 'stats-all')).toMatchObject({
+      type: 'branchStatisticsLoaded', statistics: { totals: { commits: 2 } },
+    });
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats-exclusions', repositoryId,
+      period: '30d', filters: { text: '', branches: ['refs/heads/main'], allBranches: true, authors: [], paths: [] } });
+    expect(messages.find((message) => message.requestId === 'stats-exclusions')).toMatchObject({
+      type: 'branchStatisticsLoaded', statistics: { totals: { commits: 1 } },
+    });
+    await controller.handleMessage({ type: 'requestBranchStatistics', requestId: 'stats-missing', repositoryId,
+      period: 'today', filters: { text: '', branches: ['refs/heads/missing'], authors: [], paths: [] } });
+    expect(messages.at(-1)).toMatchObject({ type: 'error', requestId: 'stats-missing' });
+    controller.dispose();
+  });
+
   it('lists configured push remotes without fetched refs and refreshes after pushing detached HEAD', async () => {
     const repository = await createRepository();
     const remote = await mkdtemp(join(tmpdir(), 'git-log-push-head-remote-'));

@@ -104,6 +104,7 @@ select:focus-visible,
   align-items: center;
   gap: 6px;
   padding: 5px 8px;
+  margin-right: max(0px, calc(var(--global-toolbar-width) + 8px - var(--files-pane-width, 320px) - 1px));
   overflow-x: auto;
   overflow-y: hidden;
   border-bottom: 1px solid var(--vscode-panel-border);
@@ -422,6 +423,12 @@ select:focus-visible,
   background: var(--workbench-header-background);
 }
 
+.global-toolbar > button {
+  flex: 0 0 26px;
+  width: 26px;
+  padding: 0;
+}
+
 .field {
   display: flex;
   align-items: center;
@@ -648,6 +655,139 @@ select:focus-visible,
 
 .log-pane.rebase-active {
   grid-template-rows: 38px 32px 30px minmax(0, 1fr);
+}
+
+.commit-view {
+  display: contents;
+}
+
+.log-pane.statistics-active {
+  grid-template-rows: 38px minmax(0, 1fr);
+}
+
+.log-pane.statistics-active.rebase-active {
+  grid-template-rows: 38px 32px minmax(0, 1fr);
+}
+
+.branch-statistics {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  user-select: text;
+}
+
+.statistics-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--vscode-panel-border);
+  background: var(--workbench-header-background);
+}
+
+.statistics-toolbar strong {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.statistics-toolbar [role='tablist'] {
+  display: flex;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.statistics-toolbar button,
+.statistics-message button {
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 3px;
+  background: transparent;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.statistics-toolbar button:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.statistics-toolbar [aria-selected='true'],
+.statistics-message button {
+  background: var(--vscode-button-secondaryBackground);
+  color: var(--vscode-button-secondaryForeground);
+  border-color: var(--vscode-focusBorder);
+}
+
+.statistics-results {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 0 16px 12px;
+}
+
+.statistics-period,
+.statistics-note {
+  color: var(--vscode-descriptionForeground);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.branch-statistics table {
+  width: 100%;
+  min-width: 580px;
+  border-collapse: collapse;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.branch-statistics th,
+.branch-statistics td {
+  padding: 9px 12px;
+  text-align: right;
+  border-bottom: 1px solid var(--vscode-panel-border);
+}
+
+.branch-statistics th:first-child {
+  text-align: left;
+}
+
+.branch-statistics tbody th {
+  font-weight: normal;
+}
+
+.branch-statistics thead {
+  position: sticky;
+  top: 0;
+  background: var(--vscode-editor-background);
+}
+
+.branch-statistics tfoot {
+  font-weight: 600;
+  background: var(--workbench-header-background);
+}
+
+.branch-statistics tbody tr:hover {
+  background: var(--vscode-list-hoverBackground);
+}
+
+.statistics-additions {
+  color: var(--vscode-gitDecoration-addedResourceForeground, #73c991);
+}
+
+.statistics-deletions {
+  color: var(--vscode-gitDecoration-deletedResourceForeground, #f14c4c);
+}
+
+.statistics-message {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  padding: 24px 0;
+  color: var(--vscode-descriptionForeground);
 }
 
 .files-resizer {

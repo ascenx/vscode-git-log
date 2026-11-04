@@ -2,6 +2,22 @@ import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
 describe('workbench styles', () => {
+  it('keeps global action buttons inside the toolbar background', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.global-toolbar > button\s*\{[^}]*flex:\s*0 0 26px;[^}]*width:\s*26px;[^}]*padding:\s*0;/su,
+    );
+  });
+
+  it('reserves toolbar overlap when the changed-files pane is narrower than the toolbar', async () => {
+    const styles = await readFile('webview/src/styles.css', 'utf8');
+
+    expect(styles).toMatch(
+      /\.filter-bar\s*\{[^}]*margin-right:\s*max\(0px, calc\(var\(--global-toolbar-width\) \+ 8px - var\(--files-pane-width, 320px\) - 1px\)\);/su,
+    );
+  });
+
   it('removes the webview root spacing so the workbench reaches both edges', async () => {
     const styles = await readFile('webview/src/styles.css', 'utf8');
 

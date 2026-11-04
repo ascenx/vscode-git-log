@@ -215,7 +215,7 @@ describe('CurrentLineBlameController', () => {
     expect(render).toHaveBeenCalledWith(
       expect.anything(),
       expect.objectContaining({
-        contentText: 'Repository User, 1分钟前 · 未提交的更改',
+        contentText: 'Repository User, 1 minute ago · Uncommitted changes',
         authorName: 'Repository User',
         authorEmail: 'repository@example.com',
         committed: false,
@@ -223,7 +223,7 @@ describe('CurrentLineBlameController', () => {
     );
     const presentation = render.mock.calls[0]?.[1];
     expect(presentation?.authoredAt).toBeDefined();
-    expect(presentation?.relativeTime).toBe('1分钟前');
+    expect(presentation?.relativeTime).toBe('1 minute ago');
   });
 
   it('refreshes an uncommitted line from now to one minute ago without another blame', async () => {
@@ -262,7 +262,7 @@ describe('CurrentLineBlameController', () => {
       expect(render).toHaveBeenLastCalledWith(
         expect.anything(),
         expect.objectContaining({
-          contentText: 'Repository User, 现在 · 未提交的更改',
+          contentText: 'Repository User, now · Uncommitted changes',
         }),
       );
 
@@ -273,7 +273,7 @@ describe('CurrentLineBlameController', () => {
       expect(render).toHaveBeenLastCalledWith(
         expect.anything(),
         expect.objectContaining({
-          contentText: 'Repository User, 1分钟前 · 未提交的更改',
+          contentText: 'Repository User, 1 minute ago · Uncommitted changes',
         }),
       );
       controller.dispose();

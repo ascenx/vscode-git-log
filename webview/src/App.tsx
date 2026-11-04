@@ -38,6 +38,7 @@ import { buildRefTree, type RefTreeNode } from './buildRefTree';
 import { advanceCommitWindow } from './commitWindow';
 import { CommitList } from './CommitList';
 import { formatCommitDate } from './formatCommitDate';
+import { BranchStatistics } from './BranchStatistics';
 
 const refGroups: readonly { label: string; kind: RefKind }[] = [
   { label: 'Local', kind: 'local' },
@@ -430,6 +431,9 @@ export function App() {
     readScrollTopByRepository(vscode.getState()),
   );
   const [filterPopup, setFilterPopup] = useState<'branch' | 'user' | 'date' | 'paths' | undefined>();
+  const [showStatistics, setShowStatistics] = useState(false);
+  const statisticsActive =
+    showStatistics && Boolean(state.selectedRepositoryId) && !state.history && !state.folderHistory;
   const [filterPopoverPosition, setFilterPopoverPosition] = useState<
     { top: number; right: number } | undefined
   >();
@@ -674,7 +678,7 @@ export function App() {
     state.layout.refsCollapsed || (responsiveCollapse.refs && !responsiveExpanded.refs),
   );
   const filesCollapsed = Boolean(
-    state.layout.filesCollapsed || (responsiveCollapse.files && !responsiveExpanded.files),
+    statisticsActive || state.layout.filesCollapsed || (responsiveCollapse.files && !responsiveExpanded.files),
   );
   const detailsPlacement = state.layout.detailsPlacement ?? 'bottom';
   const detailsInChanges = detailsPlacement === 'changes';
@@ -2068,7 +2072,7 @@ export function App() {
     (state.layout.refsColumnWidth ?? 150);
 
   const handleWorkbenchKeyDown = (event: ReactKeyboardEvent<HTMLElement>): void => {
-    if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
+    if (!statisticsActive && (event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'f') {
       event.preventDefault();
       searchRef.current?.focus();
     } else if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'l') {
@@ -2077,6 +2081,7 @@ export function App() {
     } else if (
       (event.metaKey || event.ctrlKey) &&
       event.key.toLowerCase() === 'c' &&
+      !statisticsActive &&
       state.selectedHash &&
       !(event.target instanceof HTMLInputElement) &&
       !(event.target instanceof HTMLTextAreaElement) &&
@@ -2237,7 +2242,7 @@ export function App() {
             {operationStateLabel(selectedRepository.operationState)}
           </button>
         ) : null}
-        <label className="field search-field">
+        <label className="field search-field" hidden={statisticsActive}>
           <span className="search-icon" aria-hidden="true">
             ⌕
           </span>
@@ -2274,6 +2279,7 @@ export function App() {
         <button
           type="button"
           data-popup-trigger="true"
+          hidden={statisticsActive}
           className={state.filters.authors.length ? 'filter-active' : ''}
           onClick={() => {
             setContextMenu(undefined);
@@ -2285,6 +2291,7 @@ export function App() {
         <button
           type="button"
           data-popup-trigger="true"
+          hidden={statisticsActive}
           className={state.filters.dateFrom || state.filters.dateTo ? 'filter-active' : ''}
           onClick={() => {
             setContextMenu(undefined);
@@ -2296,6 +2303,7 @@ export function App() {
         <button
           type="button"
           data-popup-trigger="true"
+          hidden={statisticsActive}
           className={state.filters.paths.length ? 'filter-active' : ''}
           onClick={() => {
             setContextMenu(undefined);
@@ -2303,6 +2311,17 @@ export function App() {
           }}
         >
           Paths{state.filters.paths.length ? ` (${String(state.filters.paths.length)})` : ''}
+        </button>
+        <button type="button" className={statisticsActive ? 'filter-active' : ''}
+          aria-label={statisticsActive ? 'Back to commits' : 'Statistics'}
+          aria-pressed={statisticsActive} disabled={!state.selectedRepositoryId}
+          title={statisticsActive ? 'Return to commit history' : 'Show author statistics for the selected branches'}
+          onClick={() => {
+            setFilterPopup(undefined);
+            setContextMenu(undefined);
+            setShowStatistics((value) => !value);
+          }}>
+          {statisticsActive ? '← Commits' : 'Statistics'}
         </button>
         {filterPopup ? (
           <div
@@ -2564,6 +2583,7 @@ export function App() {
           type="button"
           aria-label={`${filesCollapsed ? 'Expand' : 'Collapse'} changed files pane`}
           title={`${filesCollapsed ? 'Expand' : 'Collapse'} changed files pane`}
+          disabled={statisticsActive}
           onClick={() => toggleResponsivePane('files')}
         >
           ⇥
@@ -2772,10 +2792,11 @@ export function App() {
         detailsInChanges ? ' details-in-changes' : ''
       }`}
       style={{
-        gridTemplateRows: detailsInChanges
+        '--files-pane-width': `${String(filesCollapsed ? 0 : state.layout.filesWidth)}px`,
+        gridTemplateRows: statisticsActive || detailsInChanges
           ? 'minmax(0, 1fr)'
           : `minmax(0, 1fr) 4px ${state.layout.detailsHeight}px`,
-      }}
+      } as CSSProperties}
       onKeyDown={handleWorkbenchKeyDown}
       onWheelCapture={(event) => {
         const target = event.target;
@@ -3008,10 +3029,10 @@ export function App() {
         <section
           ref={logRef}
           className={`log-pane pane${
-            selectedRepository?.operationState === 'rebase' ? ' rebase-active' : ''
-          }`}
-          role="grid"
-          aria-label="Commit log"
+            selectedRepository?.operationState === 'rebase' || (statisticsActive && selectedRepository?.operationState === 'merge') ? ' rebase-active' : ''
+          }${statisticsActive ? ' statistics-active' : ''}`}
+          role={statisticsActive ? 'region' : 'grid'}
+          aria-label={statisticsActive ? 'Branch statistics view' : 'Commit log'}
           tabIndex={0}
           style={
             {
@@ -3135,6 +3156,18 @@ export function App() {
               </div>
             </div>
           ) : null}
+          {statisticsActive && state.selectedRepositoryId ? <BranchStatistics
+            repositoryId={state.selectedRepositoryId}
+            branches={state.filters.branches}
+            allBranches={Boolean(state.filters.allBranches)}
+            scopeLabel={state.filters.allBranches
+              ? `All selected refs (${String(branchFilterCount)})`
+              : state.filters.branches.length
+                ? selectedBranchRefs.map((ref) => ref.shortName).join(', ') || state.filters.branches.join(', ')
+                : selectedRepository?.currentBranch ? `HEAD · ${selectedRepository.currentBranch}` : 'HEAD (detached)'}
+            revision={state.commitListRevision}
+          /> : null}
+          <div className="commit-view" hidden={statisticsActive}>
           <div className="log-header-viewport">
             <div className="log-header" role="row" ref={logHeaderRef}>
               <span className="column-header" role="columnheader">
@@ -3303,6 +3336,7 @@ export function App() {
               </div>
             </div>
           )}
+          </div>
         </section>
 
         <div
@@ -3464,8 +3498,8 @@ export function App() {
         </div>
       ) : null}
 
-      {!detailsInChanges ? commitDetailsResizer : null}
-      {!detailsInChanges ? commitDetailsPane : null}
+      {!statisticsActive && !detailsInChanges ? commitDetailsResizer : null}
+      {!statisticsActive && !detailsInChanges ? commitDetailsPane : null}
 
       {contextMenu ? (
         <div

@@ -77,6 +77,7 @@ code --install-extension ascenx.git-log
 - Refs / Commit Graph / Changed Files / Commit Details 四区联动。
 - Branch 筛选提供 `All` 和 `HEAD (local)` 快捷选项：`All` 可一起选中 Local、Remote、Tag 引用，支持超过 100 个引用，并可逐项取消选择；`HEAD (local)` 显示当前 HEAD 的历史，包括游离 HEAD，同时保留其他日志筛选。
 - Branch 区域提供独立搜索，并将名称中带 `/` 的 Local、Remote、Tag 引用递归分组为可展开/收起的文件夹；本身包含 `/` 的 Remote 名称仍作为独立的顶层文件夹。
+- 顶部 `Statistics` 可切换为当前选中分支的人员提交统计，保留左侧分支树；支持 `Today / Last 7 Days / Last 30 Days / All`，默认 `Last 7 Days`，按 VS Code 界面所在的本地时区计算自然日并包含今天，远程工作区也使用本机时区；`All` 统计所选分支的全部历史。表格按 Commit 总数降序，展示 Merge 次数、新增、删除和净增行数及合计；查询完整时间范围，不受提交列表分页或文本、作者、日期、路径筛选影响。多分支提交去重，Merge 仅计次数，二进制文件不计行数；点击 `← Commits` 恢复原布局。
 - Git Log 作为 VS Code 底部 Panel 的独立 Tab 展示，与问题、输出、终端等工具窗口并列；点击 `Open Log` 会直接聚焦该 Tab，不再打开编辑器页或经过中间欢迎页。
 - 分页日志、有界滑动窗口、自定义 DAG lane、跨窗口 graph continuation、固定行高虚拟滚动和大列表性能基准；深分页的全局 offset、选择和相对滚动位置可恢复。`Go to HEAD` 会在当前筛选后的 Commit 列表中定位已 Checkout 的 HEAD，并将其对齐到首个可见行，不会切换当前 Branch 筛选。
 - Text/Hash、Branch、User、Date、Path 组合过滤，旧查询取消和过期响应拒绝；仓库状态刷新不会覆盖正在编辑的搜索草稿；文本查询按 canonical `git log --date-order` 顺序扫描完整正文、作者姓名与邮箱，并且只返回匹配的 Commit。隐藏提交的祖先关系会直接投影到匹配结果上，使分支线保持连续，同时不插入无关 Merge Commit 或多余 Lane。

@@ -1,6 +1,23 @@
 import { describe, expect, it } from 'vitest';
 
 describe('parseWebviewMessage', () => {
+  it('validates branch statistics periods and branch filters', async () => {
+    const { parseWebviewMessage } = await import('../../src/protocol/messages');
+    const message = { type: 'requestBranchStatistics', requestId: 'stats', repositoryId: 'repo',
+      period: '30d', filters: { text: '', branches: ['refs/heads/main'], authors: [], paths: [] } };
+    expect(parseWebviewMessage(message)).toEqual(message);
+    for (const period of ['today', '7d', '30d', 'all']) expect(parseWebviewMessage({ ...message, period })).toBeDefined();
+    for (const period of ['invalid', '', null, 7]) expect(parseWebviewMessage({ ...message, period })).toBeUndefined();
+    expect(parseWebviewMessage({ ...message, filters: { ...message.filters, branches: ['--all'] } })).toBeUndefined();
+    expect(parseWebviewMessage({ ...message, repositoryId: '' })).toBeUndefined();
+    const dateRange = { dateFrom: 100, dateTo: 200 };
+    expect(parseWebviewMessage({ ...message, dateRange })).toMatchObject({ dateRange });
+    for (const invalid of [null, {}, { dateFrom: 200, dateTo: 100 },
+      { dateFrom: Number.NaN, dateTo: 200 }, { dateFrom: 100, dateTo: Infinity }]) {
+      expect(parseWebviewMessage({ ...message, dateRange: invalid })).toBeUndefined();
+    }
+  });
+
   it('validates explicit pull rebase targets as a remote and branch pair', async () => {
     const { parseWebviewMessage } = await import('../../src/protocol/messages');
     const request = (operation: Record<string, unknown>) => parseWebviewMessage({

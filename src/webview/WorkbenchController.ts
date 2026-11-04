@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url';
 import { GitCommandError, type GitRunner } from '../git/GitRunner';
+import { BranchStatisticsService } from '../git/BranchStatisticsService';
 import type { GitService } from '../git/GitService';
 import type { FileHistoryService } from '../git/FileHistoryService';
 import { classifyGitError } from '../git/classifyGitError';
@@ -131,6 +132,8 @@ export class WorkbenchController {
   private logAbortController: AbortController | undefined;
   private selectionAbortController: AbortController | undefined;
   private historyAbortController: AbortController | undefined;
+  private statisticsAbortController: AbortController | undefined;
+  private statisticsRequestId: string | undefined;
   private activeHistory:
     | { request: EditorHistoryRequest; entries: HistoryEntry[]; refs: RefLabel[] }
     | undefined;
@@ -202,8 +205,49 @@ export class WorkbenchController {
         case 'ready':
           await this.initialize(message.requestId);
           break;
+        case 'cancelBranchStatistics':
+          if (this.statisticsRequestId === message.requestId) this.statisticsAbortController?.abort();
+          break;
+        case 'requestBranchStatistics': {
+          this.requireSelectedRepository(message.repositoryId);
+          this.statisticsAbortController?.abort();
+          const abortController = new AbortController();
+          this.statisticsAbortController = abortController;
+          this.statisticsRequestId = message.requestId;
+          const repository = this.requireRepository(message.repositoryId);
+          const cwd = fileURLToPath(repository.rootUri);
+          const refs = await this.options.gitService.getRefs(cwd, repository.currentBranch, abortController.signal);
+          const selected = new Set(message.filters.branches);
+          const selectedRefs = refs.filter((ref) => message.filters.allBranches
+            ? !selected.has(ref.fullName) : selected.has(ref.fullName));
+          if (!message.filters.allBranches && message.filters.branches.some((name) => !refs.some((ref) => ref.fullName === name))) {
+            throw new Error('A selected branch no longer exists. Refresh and select a branch again.');
+          }
+          let revisions = selectedRefs.map((ref) => ref.target);
+          if (!message.filters.allBranches && !selected.size) {
+            try {
+              const head = await this.options.gitRunner.run(['rev-parse', '--verify', '--quiet', 'HEAD^{commit}'], {
+                cwd, signal: abortController.signal, timeoutMs: 30_000, maxStdoutBytes: 128,
+              });
+              revisions = [head.stdout.toString('utf8').trim()];
+            } catch (error) {
+              // An unborn HEAD has no reachable commits. Other failures remain visible.
+              if (!(error instanceof GitCommandError) || error.exitCode !== 1 || error.cancelled || error.timedOut) throw error;
+              revisions = [];
+            }
+          }
+          const statistics = await new BranchStatisticsService(this.options.gitRunner).getStatistics(cwd, {
+            revisions, period: message.period, signal: abortController.signal,
+            ...(message.dateRange ? { dateRange: message.dateRange } : {}),
+          });
+          if (abortController.signal.aborted || this.selectedRepositoryId !== message.repositoryId) break;
+          await this.options.postMessage({ type: 'branchStatisticsLoaded', requestId: message.requestId,
+            repositoryId: message.repositoryId, statistics });
+          break;
+        }
         case 'selectRepository': {
           this.requireRepository(message.repositoryId);
+          this.statisticsAbortController?.abort();
           this.selectionRequestSequence += 1;
           const selectionSequence = ++this.repositorySelectionSequence;
           await this.leaveFolderHistory(message.requestId);
@@ -514,6 +558,7 @@ export class WorkbenchController {
   }
 
   dispose(): void {
+    this.statisticsAbortController?.abort();
     this.logAbortController?.abort();
     this.selectionAbortController?.abort();
     this.historyAbortController?.abort();

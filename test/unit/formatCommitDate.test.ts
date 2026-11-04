@@ -18,6 +18,7 @@ describe('formatCommitDate', () => {
     expect(formatCommitDate(1)).not.toBe('');
     expect(formatCommitDate(2)).not.toBe('');
     expect(formatter).toHaveBeenCalledTimes(1);
+    expect(formatter).toHaveBeenCalledWith('en-US', expect.any(Object));
   });
 
   it('does not create a formatter for an empty timestamp', async () => {

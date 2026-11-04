@@ -1,6 +1,33 @@
 export type RepositoryId = string;
 export type CommitHash = string;
 
+export type StatisticsPeriod = 'today' | '7d' | '30d' | 'all';
+
+export interface StatisticsDateRange {
+  dateFrom: number;
+  dateTo: number;
+}
+
+export interface StatisticsCounts {
+  commits: number;
+  merges: number;
+  additions: number;
+  deletions: number;
+  netAdditions: number;
+}
+
+export interface AuthorStatistics extends StatisticsCounts {
+  authorName: string;
+  authorEmail: string;
+}
+
+export interface BranchStatistics {
+  dateFrom?: number;
+  dateTo?: number;
+  authors: AuthorStatistics[];
+  totals: StatisticsCounts;
+}
+
 export type RefKind = 'head' | 'local' | 'remote' | 'tag';
 export type SignatureStatus = 'good' | 'bad' | 'unknown' | 'expired' | 'revoked' | 'error' | 'none';
 export type GitOperationState = 'merge' | 'rebase' | 'cherry-pick' | 'revert';
