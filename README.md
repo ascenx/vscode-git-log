@@ -21,6 +21,15 @@ You can also install it from the command line:
 code --install-extension ascenx.git-log
 ```
 
+## What's new in v0.1.4
+
+- **Branch statistics:** Open `Statistics` for author rankings, commit and merge counts, and added/deleted/net lines. Choose `Today`, `Last 7 Days` (default), `Last 30 Days`, or `All`. Calendar periods follow your local time zone, including in remote workspaces.
+- **Pull with rebase:** Use `Pull (Rebase)` for the configured upstream or `Pull (Rebase) from…` for a specific remote and branch.
+- **Merge conflict controls:** The `Merging` row provides `Continue` after conflicts are resolved and a confirmed `Abort` action.
+- English UI text and date formatting, plus toolbar spacing fixes that prevent overlap with the filters.
+
+See the [changelog](CHANGELOG.md#014) for details.
+
 ## Screenshots
 
 ### Git Log Workbench

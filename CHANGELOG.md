@@ -2,12 +2,31 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.4
+
+### Added
+
+- Added a `Statistics` view for the selected branches with per-author commit and merge counts, added/deleted/net lines, and totals sorted by commit count. The reference tree stays available, and `← Commits` restores the commit layout.
+- Added `Today`, `Last 7 Days` (default), `Last 30 Days`, and `All` statistics periods. Calendar periods include today and use the VS Code UI's local time zone, including daylight saving transitions and remote workspaces; `All` covers the full reachable history without date restrictions.
+- Statistics query the full selected period independently of log pagination and text/author/date/path filters, deduplicate shared commits across branches, and honor `.mailmap`. Merges count as commits without duplicating line changes; binary files contribute no line counts.
+- Added `Pull (Rebase)` and `Pull (Rebase) from…` to More actions, using either the configured upstream or an explicitly selected remote and branch without changing the upstream configuration.
+- Added a `Merging` status row with `Continue` and `Abort` actions for merge conflicts. `Continue` stays disabled until conflicts are resolved, and `Abort` requires confirmation.
+
+### Changed
+
+- Standardized product UI copy and date/relative-time formatting on English while preserving repository content in its original language.
+
+### Fixed
+
+- Prevented global toolbar buttons from overflowing their background or overlapping filters, including when the Changed Files pane is narrowed or collapsed.
+- Kept commit-hash copy shortcuts from overriding text copying in the statistics view.
+- Read the latest HEAD when refreshing statistics and cancelled superseded queries when switching views, branches, periods, or repositories.
+
 ## 0.1.3
 
 ### Added
 
 - Added `All` to the Branch filter to select Local, Remote, and Tag references together, and `HEAD (local)` to show the current HEAD's history, including detached HEAD ([#6](https://github.com/ascenx/vscode-git-log/issues/6)). Other log filters are preserved.
-- Added a `Merging` status row with `Continue` and `Abort` actions for merge conflicts. `Continue` stays disabled until conflicts are resolved, and `Abort` requires confirmation.
 
 ### Fixed
 

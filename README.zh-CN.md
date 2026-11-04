@@ -21,6 +21,15 @@ Git Log 支持 VS Code 1.85.2 及更高版本，同时要求 Git 2.27 或更高�
 code --install-extension ascenx.git-log
 ```
 
+## v0.1.4 更新
+
+- **分支统计：** 点击 `Statistics` 查看人员排名、Commit 和 Merge 次数、新增、删除与净增行数。支持 `Today`、`Last 7 Days`（默认）、`Last 30 Days` 和 `All`，自然日范围使用本机时区，远程工作区也保持一致。
+- **Rebase 拉取：** `Pull (Rebase)` 使用当前分支的上游，`Pull (Rebase) from…` 可指定 Remote 和分支。
+- **Merge 冲突控制：** `Merging` 状态行提供解决冲突后的 `Continue` 和需确认的 `Abort`。
+- 界面文案与日期格式统一使用英文，并修复工具栏按钮与筛选项重叠的问题。
+
+完整说明见 [Changelog](CHANGELOG.md#014)。
+
 ## 功能截图
 
 ### Git Log 主界面
