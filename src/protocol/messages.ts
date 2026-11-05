@@ -276,6 +276,7 @@ export type ExtensionToWebviewMessage =
       scope: 'repositories' | 'log' | 'selection' | 'operation';
     }
   | { type: 'operationCompleted'; requestId: string; repositoryId: string; message: string }
+  | { type: 'operationLog'; requestId: string; repositoryId: string; text: string }
   | { type: 'operationCancelled'; requestId: string; repositoryId: string }
   | { type: 'clipboardCopied'; requestId: string }
   | { type: 'pushHeadTargetsLoaded'; requestId: string; repositoryId: string; remotes: string[] }

@@ -3,7 +3,8 @@ import { normalize } from 'node:path';
 import type { GitOperationRequest } from '../protocol/messages';
 import type { RepositorySummary } from '../shared/models';
 import { inspectRepository } from '../repositories/discoverRepositories';
-import { GitCommandError, type GitRunner } from './GitRunner';
+import { GitCommandError, type GitRunOptions, type GitRunResult, type GitRunner } from './GitRunner';
+import { redactGitDiagnostic } from './classifyGitError';
 
 export interface GitOperationResult {
   message: string;
@@ -12,6 +13,7 @@ export interface GitOperationResult {
 
 export interface GitOperationRunOptions {
   confirm?(confirmation: OperationConfirmation): Promise<boolean>;
+  onLog?(text: string): void;
 }
 
 export interface GitOperationServiceOptions {
@@ -542,21 +544,22 @@ export class GitOperationService {
           rewritePlan = revalidatedPlan;
         }
         if (rewritePlan && preparedOperation.kind === 'dropCommits') {
-          await this.rebaseCommitRange(rewritePlan, rewritePlan.baseParent);
+          await this.rebaseCommitRange(rewritePlan, rewritePlan.baseParent, options.onLog);
         } else if (rewritePlan && preparedOperation.kind === 'squashCommits') {
           const squashedHash = await this.createSquashedCommit(
             rewritePlan,
             preparedOperation.message,
+            options.onLog,
           );
-          await this.rebaseCommitRange(rewritePlan, squashedHash);
+          await this.rebaseCommitRange(rewritePlan, squashedHash, options.onLog);
         } else {
-          await this.runner.run(buildOperationArguments(preparedOperation, forceSourceHash), {
+          await this.runLoggedCommand(buildOperationArguments(preparedOperation, forceSourceHash), {
             cwd: fileURLToPath(freshRepository.rootUri),
             timeoutMs: 10 * 60_000,
             ...(preparedOperation.kind === 'rebaseContinue' || preparedOperation.kind === 'mergeContinue'
               ? { env: { GIT_EDITOR: 'true' } }
               : {}),
-          });
+          }, options.onLog);
         }
         return { message: `${operation.kind} completed.` };
       });
@@ -574,6 +577,44 @@ export class GitOperationService {
   private getQueueKey(repository: RepositorySummary): string {
     const path = normalize(fileURLToPath(repository.commonGitDirUri ?? repository.gitDirUri));
     return process.platform === 'win32' ? path.toLowerCase() : path;
+  }
+
+  private async runLoggedCommand(
+    args: readonly string[],
+    runOptions: GitRunOptions,
+    onLog?: (text: string) => void,
+  ): Promise<GitRunResult> {
+    if (!onLog) return this.runner.run(args, runOptions);
+    const command = args.map((arg) => /^[\w./:@=+-]+$/u.test(arg) ? arg : JSON.stringify(arg)).join(' ');
+    onLog(`$ git ${redactGitDiagnostic(command)}\n`);
+    const pending = { stdout: '', stderr: '' };
+    const flush = (stream: 'stdout' | 'stderr', final = false): void => {
+      const text = pending[stream];
+      const end = final ? text.length : Math.max(text.lastIndexOf('\n'), text.lastIndexOf('\r')) + 1;
+      if (end === 0) return;
+      // Redact complete lines so credentials split across process chunks stay private.
+      onLog(redactGitDiagnostic(text.slice(0, end)).replace(/\r\n?/gu, '\n'));
+      pending[stream] = text.slice(end);
+    };
+    let exitStatus = 'unknown';
+    try {
+      const result = await this.runner.run(args, {
+        ...runOptions,
+        onOutput: (stream, text) => {
+          pending[stream] += text;
+          flush(stream);
+        },
+      });
+      exitStatus = String(result.exitCode);
+      return result;
+    } catch (error) {
+      if (error instanceof GitCommandError) exitStatus = String(error.exitCode);
+      throw error;
+    } finally {
+      flush('stdout', true);
+      flush('stderr', true);
+      onLog(`\n[exit ${exitStatus}]\n`);
+    }
   }
 
   private async planCommitRangeRewrite(
@@ -662,6 +703,7 @@ export class GitOperationService {
   private async createSquashedCommit(
     plan: CommitRangeRewritePlan,
     message: string,
+    onLog?: (text: string) => void,
   ): Promise<string> {
     if (!message.trim() || message.length > 100_000 || message.includes('\0')) {
       throw new Error('The squash commit message is invalid.');
@@ -678,7 +720,7 @@ export class GitOperationService {
       .toString('utf8')
       .replace(/\r?\n$/u, '')
       .split('\0');
-    const commitResult = await this.runner.run(
+    const commitResult = await this.runLoggedCommand(
       ['commit-tree', treeResult.stdout.toString('utf8').trim(), '-p', plan.baseParent],
       {
         cwd: plan.cwd,
@@ -690,6 +732,7 @@ export class GitOperationService {
           GIT_AUTHOR_DATE: authorDate,
         },
       },
+      onLog,
     );
     return validateHash(commitResult.stdout.toString('utf8').trim());
   }
@@ -697,9 +740,10 @@ export class GitOperationService {
   private async rebaseCommitRange(
     plan: CommitRangeRewritePlan,
     newBase: string,
+    onLog?: (text: string) => void,
   ): Promise<void> {
     await this.assertRewritePlanStillCurrent(plan);
-    await this.runner.run(
+    await this.runLoggedCommand(
       [
         '-c',
         'rebase.updateRefs=false',
@@ -711,6 +755,7 @@ export class GitOperationService {
         plan.newest,
       ],
       { cwd: plan.cwd, timeoutMs: 10 * 60_000 },
+      onLog,
     );
   }
 

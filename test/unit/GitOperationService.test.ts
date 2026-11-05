@@ -80,6 +80,45 @@ async function commitFile(cwd: string, name: string, content: string, message: s
 }
 
 describe('GitOperationService', () => {
+  it('redacts URL credentials split across output chunks and flushes unterminated output', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const logs: string[] = [];
+    const runner = {
+      run: async (_args: readonly string[], options: GitRunOptions) => {
+        options.onOutput?.('stderr', 'https://alice:sec');
+        expect(logs.join('')).not.toContain('alice');
+        options.onOutput?.('stderr', 'ret@example.com/repo.git\r');
+        options.onOutput?.('stdout', 'last line without newline');
+        return successfulResult;
+      },
+    } as unknown as GitRunner;
+    await new GitOperationService(runner, passthroughInspection).run(repository, { kind: 'push' }, {
+      onLog: (text) => logs.push(text),
+    });
+    expect(logs.join('')).toContain('https://***@example.com/repo.git\n');
+    expect(logs.join('')).not.toContain('secret');
+    expect(logs.join('')).toContain('last line without newline\n[exit 0]');
+  });
+
+  it('logs the actual command, output and exit status of a local operation', async () => {
+    const { GitOperationService } = await import('../../src/git/GitOperationService');
+    const fixture = await createFixtureRepository('git-operation-log-');
+    const service = new GitOperationService(new RealGitRunner());
+    const logs: string[] = [];
+    await service.run(fixture.summary, { kind: 'createAndCheckoutBranch', name: 'feature/log' }, {
+      onLog: (text) => logs.push(text),
+    });
+    expect(logs.join('')).toContain('$ git switch -c feature/log\n');
+    expect(logs.join('')).toContain("Switched to a new branch 'feature/log'");
+    expect(logs.join('')).toContain('[exit 0]');
+    const failures: string[] = [];
+    await expect(service.run(fixture.summary, { kind: 'createBranch', name: 'feature/log', startPoint: 'HEAD' }, {
+      onLog: (text) => failures.push(text),
+    })).rejects.toBeInstanceOf(GitCommandError);
+    expect(failures.join('')).toContain('already exists');
+    expect(failures.join('')).toMatch(/\[exit [1-9]\d*\]/u);
+  });
+
   async function createPushFixture() {
     const fixture = await createFixtureRepository('git-operation-push-head-');
     const remote = await mkdtemp(join(tmpdir(), 'git-operation-push-head-remote-'));

@@ -1,6 +1,12 @@
 import { readFile } from 'node:fs/promises';
 import { describe, expect, it } from 'vitest';
 
+it('keeps the command log compact with a scrollable output body', async () => {
+  const styles = await readFile('webview/src/styles.css', 'utf8');
+  expect(styles).toMatch(/\.operation-log\s*\{[^}]*position:\s*fixed;[^}]*width:\s*calc\(100vw \/ 3\);[^}]*overflow:\s*hidden;/su);
+  expect(styles).toMatch(/\.operation-log-output\s*\{[^}]*min-height:\s*0;[^}]*overflow-y:\s*auto;[^}]*white-space:\s*pre-wrap;/su);
+});
+
 describe('workbench styles', () => {
   it('keeps global action buttons inside the toolbar background', async () => {
     const styles = await readFile('webview/src/styles.css', 'utf8');

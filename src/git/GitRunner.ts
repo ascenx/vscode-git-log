@@ -1,4 +1,5 @@
 import { spawn } from 'node:child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { redactGitDiagnostic } from './classifyGitError';
 
 export interface GitRunOptions {
@@ -9,6 +10,7 @@ export interface GitRunOptions {
   env?: NodeJS.ProcessEnv;
   maxStdoutBytes?: number;
   maxStderrBytes?: number;
+  onOutput?(stream: 'stdout' | 'stderr', text: string): void;
 }
 
 export interface GitRunResult {
@@ -74,6 +76,12 @@ export class GitRunner {
       const startedAt = performance.now();
       const stdout: Buffer[] = [];
       const stderr: Buffer[] = [];
+      const decoders = { stdout: new StringDecoder('utf8'), stderr: new StringDecoder('utf8') };
+      const emitOutput = (stream: 'stdout' | 'stderr', buffer: Buffer): void => {
+        if (!options.onOutput) return;
+        const text = decoders[stream].write(buffer);
+        if (text) options.onOutput(stream, text);
+      };
       let cancelled = options.signal?.aborted ?? false;
       let timedOut = false;
       let settled = false;
@@ -142,13 +150,17 @@ export class GitRunner {
         const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
         if (stdoutBytes + buffer.length > maximumStdoutBytes) {
           const remaining = Math.max(0, maximumStdoutBytes - stdoutBytes);
-          if (remaining > 0) stdout.push(buffer.subarray(0, remaining));
+          if (remaining > 0) {
+            stdout.push(buffer.subarray(0, remaining));
+            emitOutput('stdout', buffer.subarray(0, remaining));
+          }
           stdoutBytes += remaining;
           stdoutLimitExceeded = true;
           stop();
           return;
         }
         stdout.push(buffer);
+        emitOutput('stdout', buffer);
         stdoutBytes += buffer.length;
       });
       child.stderr?.on('data', (chunk: Buffer | string) => {
@@ -157,13 +169,17 @@ export class GitRunner {
         const maximumBytes = options.maxStderrBytes ?? GitRunner.DEFAULT_MAX_STDERR_BYTES;
         if (stderrBytes + buffer.length > maximumBytes) {
           const remaining = Math.max(0, maximumBytes - stderrBytes);
-          if (remaining > 0) stderr.push(buffer.subarray(0, remaining));
+          if (remaining > 0) {
+            stderr.push(buffer.subarray(0, remaining));
+            emitOutput('stderr', buffer.subarray(0, remaining));
+          }
           stderrBytes += remaining;
           stderrLimitExceeded = true;
           stop();
           return;
         }
         stderr.push(buffer);
+        emitOutput('stderr', buffer);
         stderrBytes += buffer.length;
       });
 
@@ -201,6 +217,10 @@ export class GitRunner {
         if (forceKillTimer) clearTimeout(forceKillTimer);
         options.signal?.removeEventListener('abort', abortListener);
 
+        for (const stream of ['stdout', 'stderr'] as const) {
+          const text = decoders[stream].end();
+          if (text) options.onOutput?.(stream, text);
+        }
         const stdoutBuffer = Buffer.concat(stdout);
         const stderrBuffer = Buffer.concat(stderr);
         const durationMs = performance.now() - startedAt;

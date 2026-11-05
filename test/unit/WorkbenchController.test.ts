@@ -2056,21 +2056,17 @@ describe('WorkbenchController', () => {
       if (confirmation && options.confirm && !(await options.confirm(confirmation))) {
         return { message: '', cancelled: true };
       }
+      options.onLog?.('$ git reset --hard aaaaaaaa\n');
+      options.onLog?.('HEAD is now at aaaaaaaa\n');
       return { message: 'checkout completed.' };
     });
     const confirmOperation = vi.fn().mockResolvedValueOnce(false).mockResolvedValueOnce(true);
-    let progressCalls = 0;
-    const withProgress = async <T>(_title: string, task: () => Promise<T>): Promise<T> => {
-      progressCalls += 1;
-      return task();
-    };
     const controller = new (await import('../../src/webview/WorkbenchController')).WorkbenchController({
       workspaceRoots: [repository],
       gitService: new GitService(new GitRunner()),
       gitRunner: new GitRunner(),
       operationService: { run } as never,
       confirmOperation,
-      withProgress,
       scanDepth: 0,
       initialPageSize: 200,
       pageSize: 500,
@@ -2116,8 +2112,14 @@ describe('WorkbenchController', () => {
     });
 
     expect(confirmOperation).toHaveBeenCalledTimes(2);
-    expect(progressCalls).toBe(2);
     expect(run).toHaveBeenCalledTimes(2);
+    expect(messages.filter((message) => message.type === 'operationLog')).toEqual([
+      { type: 'operationLog', requestId: 'run-hard-reset', repositoryId, text: '$ git reset --hard aaaaaaaa\n' },
+      { type: 'operationLog', requestId: 'run-hard-reset', repositoryId, text: 'HEAD is now at aaaaaaaa\n' },
+    ]);
+    expect(messages.findIndex((message) => message.type === 'operationLog')).toBeLessThan(
+      messages.findIndex((message) => message.type === 'operationCompleted'),
+    );
     expect(messages).toEqual(
       expect.arrayContaining([
         expect.objectContaining({

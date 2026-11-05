@@ -39,6 +39,26 @@ import { advanceCommitWindow } from './commitWindow';
 import { CommitList } from './CommitList';
 import { formatCommitDate } from './formatCommitDate';
 import { BranchStatistics } from './BranchStatistics';
+import { OperationLog, type OperationLogState } from './OperationLog';
+
+const MAX_OPERATION_LOG_LENGTH = 256 * 1024;
+const FAILURE_ONLY_LOG_OPERATIONS = new Set<GitOperationRequest['kind']>([
+  'checkout',
+  'checkoutDetached',
+  'checkoutRemote',
+  'switchPrevious',
+  'createAndCheckoutBranch',
+]);
+
+function appendOperationOutput(log: OperationLogState, text: string): OperationLogState {
+  const output = log.output + text;
+  return {
+    ...log,
+    output: output.length > MAX_OPERATION_LOG_LENGTH
+      ? `[Earlier output truncated]\n${output.slice(-MAX_OPERATION_LOG_LENGTH)}`
+      : output,
+  };
+}
 
 const refGroups: readonly { label: string; kind: RefKind }[] = [
   { label: 'Local', kind: 'local' },
@@ -483,6 +503,22 @@ export function App() {
     loading: boolean;
     error?: string;
   }>();
+  const [operationLogs, setOperationLogs] = useState<Record<string, OperationLogState>>({});
+  const updateOperationLog = useCallback((
+    repositoryId: string,
+    operationRequestId: string,
+    text: string,
+    status?: OperationLogState['status'],
+  ): void => {
+    setOperationLogs((current) => {
+      const log = current[repositoryId];
+      if (!log || log.requestId !== operationRequestId) return current;
+      return {
+        ...current,
+        [repositoryId]: { ...appendOperationOutput(log, text), ...(status ? { status } : {}) },
+      };
+    });
+  }, []);
   const [historyParentPicker, setHistoryParentPicker] = useState<
     { repositoryId: string; commit: CommitSummary } | undefined
   >();
@@ -657,6 +693,9 @@ export function App() {
   const selectedOperationInFlight = state.selectedRepositoryId
     ? state.operationRepositoryIds.has(state.selectedRepositoryId)
     : false;
+  const selectedOperationLog = state.selectedRepositoryId
+    ? operationLogs[state.selectedRepositoryId]
+    : undefined;
   const remoteBranchOperation: GitOperationRequest | undefined = remoteBranchDialog
     ? {
         ...(remoteBranchDialog.kind === 'pullRebase' ? { kind: 'pull' as const, rebase: true } : { kind: 'pushHead' as const }),
@@ -1230,6 +1269,10 @@ export function App() {
               : current,
           );
           break;
+        case 'operationLog':
+          if (activeOperationRequestByRepository.current.get(message.repositoryId) !== message.requestId) break;
+          updateOperationLog(message.repositoryId, message.requestId, message.text);
+          break;
         case 'loading':
           if (message.scope === 'operation' && message.repositoryId) {
             const repositoryId = message.repositoryId;
@@ -1308,6 +1351,11 @@ export function App() {
               }
               activeOperationRequestByRepository.current.delete(repositoryId);
               requestScopeById.current.delete(message.requestId);
+              updateOperationLog(
+                repositoryId, message.requestId,
+                `\n${message.message}\n${message.detail && message.detail !== message.message ? `${message.detail}\n` : ''}`,
+                'Failed',
+              );
               setState((current) => {
                 const operationRepositoryIds = new Set(current.operationRepositoryIds);
                 operationRepositoryIds.delete(repositoryId);
@@ -1361,6 +1409,7 @@ export function App() {
           }
           activeOperationRequestByRepository.current.delete(message.repositoryId);
           requestScopeById.current.delete(message.requestId);
+          updateOperationLog(message.repositoryId, message.requestId, `\n${message.message}\n`, 'Completed');
           setState((current) => {
             const operationRepositoryIds = new Set(current.operationRepositoryIds);
             operationRepositoryIds.delete(message.repositoryId);
@@ -1390,6 +1439,7 @@ export function App() {
           }
           activeOperationRequestByRepository.current.delete(message.repositoryId);
           requestScopeById.current.delete(message.requestId);
+          updateOperationLog(message.repositoryId, message.requestId, '\nOperation cancelled.\n', 'Cancelled');
           setState((current) => {
             const operationRepositoryIds = new Set(current.operationRepositoryIds);
             operationRepositoryIds.delete(message.repositoryId);
@@ -1415,7 +1465,7 @@ export function App() {
         window.clearTimeout(detailsHashCopyTimer.current);
       }
     };
-  }, [vscode]);
+  }, [updateOperationLog, vscode]);
 
   const send = (message: WebviewToExtensionMessage): void => {
     const scope = requestScopeForMessage(message);
@@ -2010,6 +2060,16 @@ export function App() {
       return;
     }
     activeOperationRequestByRepository.current.set(repositoryId, operationRequestId);
+    setOperationLogs((current) => ({
+      ...current,
+      [repositoryId]: {
+        requestId: operationRequestId,
+        output: '',
+        status: 'Running',
+        hidden: false,
+        showOnFailureOnly: FAILURE_ONLY_LOG_OPERATIONS.has(operation.kind),
+      },
+    }));
     setState((current) => ({
       ...current,
       operationRepositoryIds: new Set(current.operationRepositoryIds).add(repositoryId),
@@ -3492,11 +3552,22 @@ export function App() {
         </section>
       </section>
 
-      {selectedOperationInFlight ? (
-        <div className="operation-status" role="status" aria-live="polite">
-          Running Git operation…
-        </div>
-      ) : null}
+      {selectedOperationLog && !selectedOperationLog.hidden &&
+        (!selectedOperationLog.showOnFailureOnly || selectedOperationLog.status === 'Failed') ? (
+          <OperationLog
+            key={selectedOperationLog.requestId}
+            log={selectedOperationLog}
+            maxHeight={state.layout.detailsHeight}
+            onClose={() => {
+              const repositoryId = state.selectedRepositoryId;
+              if (!repositoryId) return;
+              setOperationLogs((current) => {
+                const log = current[repositoryId];
+                return log ? { ...current, [repositoryId]: { ...log, hidden: true } } : current;
+              });
+            }}
+          />
+        ) : null}
 
       {!statisticsActive && !detailsInChanges ? commitDetailsResizer : null}
       {!statisticsActive && !detailsInChanges ? commitDetailsPane : null}

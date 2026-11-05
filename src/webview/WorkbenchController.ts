@@ -74,7 +74,6 @@ export interface WorkbenchControllerOptions {
   copyToClipboard?(text: string): Promise<void>;
   operationService?: Pick<GitOperationService, 'run'>;
   confirmOperation?(confirmation: OperationConfirmation): Promise<boolean>;
-  withProgress?<T>(title: string, task: () => Promise<T>): Promise<T>;
   onRepositoriesChanged?(repositories: readonly RepositorySummary[]): void;
   openDiff?(
     repository: RepositorySummary,
@@ -1305,6 +1304,14 @@ export class WorkbenchController {
     });
     const execute = (): Promise<GitOperationResult> =>
       this.options.operationService?.run(repository, operation, {
+        onLog: (text) => {
+          void this.options.postMessage({
+            type: 'operationLog',
+            requestId: message.requestId,
+            repositoryId: message.repositoryId,
+            text,
+          });
+        },
         confirm: async (confirmation) => {
           if (!this.options.confirmOperation) {
             throw new Error('A destructive Git operation requires confirmation.');
@@ -1326,9 +1333,7 @@ export class WorkbenchController {
     let result: GitOperationResult | undefined;
     let operationError: unknown;
     try {
-      result = this.options.withProgress
-        ? await this.options.withProgress(`Git: ${operation.kind}`, execute)
-        : await execute();
+      result = await execute();
     } catch (error) {
       operationError = error;
     } finally {

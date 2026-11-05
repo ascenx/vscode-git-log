@@ -111,13 +111,6 @@ export class WorkbenchViewProvider implements vscode.WebviewViewProvider, vscode
         );
         return selected === confirmation.confirmLabel;
       },
-      withProgress: (title, task) =>
-        Promise.resolve(
-          vscode.window.withProgress(
-            { location: vscode.ProgressLocation.Notification, title, cancellable: false },
-            task,
-          ),
-        ),
       scanDepth: configuration.get<number>('repositories.scanDepth', 2),
       repositoryExcludes: configuration.get<string[]>('repositories.exclude', [
         '**/node_modules/**',

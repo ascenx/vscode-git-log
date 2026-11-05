@@ -897,16 +897,78 @@ select:focus-visible,
   }
 }
 
-.operation-status {
+.operation-log {
   position: fixed;
   z-index: 30;
   right: 12px;
   bottom: 12px;
-  padding: 7px 10px;
-  border: 1px solid var(--vscode-progressBar-background);
-  border-radius: 3px;
+  display: flex;
+  flex-direction: column;
+  width: calc(100vw / 3);
+  max-width: calc(100vw - 24px);
+  overflow: hidden;
+  border: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  border-radius: 4px;
   background: var(--vscode-notifications-background);
   color: var(--vscode-notifications-foreground);
+  box-shadow: 0 3px 12px var(--vscode-widget-shadow);
+}
+
+.operation-log-header {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 8px;
+  border-bottom: 1px solid var(--vscode-notifications-border, var(--vscode-panel-border));
+  font-size: 11px;
+}
+
+.operation-log-header strong {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-log-header button {
+  flex: 0 0 auto;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 3px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.operation-log-header button:hover {
+  background: var(--vscode-toolbar-hoverBackground);
+}
+
+.operation-log-status {
+  color: var(--vscode-descriptionForeground);
+}
+
+.operation-log-status.failed {
+  color: var(--vscode-errorForeground);
+}
+
+.operation-log-output {
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  overflow-y: auto;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-family: var(--vscode-editor-font-family, monospace);
+  font-size: 11px;
+  line-height: 1.5;
+  user-select: text;
 }
 
 @media (prefers-reduced-motion: reduce) {

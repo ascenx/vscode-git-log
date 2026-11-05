@@ -162,6 +162,7 @@ describe('WorkbenchViewProvider editor history handoff', () => {
     const options = controllerOptions.at(-1) as
       | { openSourceControl?(): Promise<void> }
       | undefined;
+    expect(options).not.toHaveProperty('withProgress');
     await options?.openSourceControl?.();
     expect(executeCommand).toHaveBeenLastCalledWith('workbench.view.scm');
     messageHandler?.({ type: 'ready', requestId: 'ready-history-provider' });

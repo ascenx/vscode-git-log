@@ -10,6 +10,38 @@ afterEach(async () => {
 });
 
 describe('GitRunner', () => {
+  it('streams UTF-8 stdout and stderr before the process exits', async () => {
+    const { GitRunner } = await import('../../src/git/GitRunner');
+    const cwd = await mkdtemp(join(tmpdir(), 'git-log-workbench-stream-'));
+    temporaryDirectories.push(cwd);
+    const output: Record<string, string> = { stdout: '', stderr: '' };
+    let sawOutput: (() => void) | undefined;
+    const firstOutput = new Promise<void>((resolve) => { sawOutput = resolve; });
+    const runner = new GitRunner({ executable: process.execPath });
+    let finished = false;
+    const execution = runner.run(['-e', `
+      const bytes = Buffer.from('执行中\\n');
+      process.stdout.write(bytes.subarray(0, 2));
+      setTimeout(() => {
+        process.stdout.write(bytes.subarray(2));
+        process.stderr.write('progress\\n');
+        process.stdin.once('data', () => process.exit(0));
+      }, 20);
+    `], {
+      cwd,
+      input: 'finish',
+      onOutput: (stream, text) => {
+        output[stream] += text;
+        if (output.stderr?.includes('progress')) sawOutput?.();
+      },
+    }).then((result) => { finished = true; return result; });
+    await Promise.race([firstOutput, execution]);
+    expect(finished).toBe(false);
+    const result = await execution;
+    expect(output).toEqual({ stdout: '执行中\n', stderr: 'progress\n' });
+    expect(result.stdout.toString('utf8')).toBe('执行中\n');
+  });
+
   it('executes Git with an argument array and returns binary-safe output', async () => {
     const modulePath = '../../src/git/GitRunner';
     const runnerModule = await import(/* @vite-ignore */ modulePath).catch(() => undefined);

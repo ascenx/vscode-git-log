@@ -142,6 +142,137 @@ function initializeCommitRangeFixture() {
 }
 
 describe('WorkbenchApp', () => {
+  function startBranchSwitch(kind: 'checkout' | 'checkoutDetached' | 'checkoutRemote' | 'switchPrevious' | 'createAndCheckoutBranch') {
+    const { newest, middle, commits } = initializeCommitRangeFixture();
+    if (kind === 'switchPrevious' || kind === 'createAndCheckoutBranch') {
+      updateHeadRepository(newest);
+      fireEvent.contextMenu(screen.getByTitle(newest));
+      if (kind === 'switchPrevious') {
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Switch Back' }));
+      } else {
+        fireEvent.click(screen.getByRole('menuitem', { name: 'Create Branch and Checkout…' }));
+        fireEvent.change(screen.getByRole('textbox', { name: 'Branch name' }), { target: { value: 'feature/log' } });
+        fireEvent.click(screen.getByRole('button', { name: 'Create and Checkout' }));
+      }
+    } else {
+      const remote = kind !== 'checkout';
+      const fullName = remote ? 'refs/remotes/origin/feature' : 'refs/heads/feature';
+      act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: 'repositoryData', requestId: 'switch-refs', repositoryId: 'repo-commit-range',
+        refs: [{ fullName, shortName: remote ? 'origin/feature' : 'feature',
+          kind: remote ? 'remote' : 'local', ...(remote ? { remote: 'origin' } : {}),
+          target: middle, ahead: 0, behind: 0, isCurrent: false }],
+        commits, filters: { text: '', branches: [], authors: [], paths: [] }, replace: true, hasMore: false,
+      } })));
+      fireEvent.contextMenu(screen.getByTitle(fullName));
+      const label = kind === 'checkout' ? 'Checkout'
+        : kind === 'checkoutDetached' ? 'Checkout (Detached HEAD)' : 'Checkout as New Local…';
+      fireEvent.click(screen.getByRole('menuitem', { name: label }));
+      if (kind === 'checkoutRemote') fireEvent.click(screen.getByRole('button', { name: 'Checkout' }));
+    }
+    const operation = postedMessages.find((message) => message.type === 'runOperation');
+    if (!operation || operation.type !== 'runOperation') throw new Error('Missing branch switch');
+    expect(operation.operation.kind).toBe(kind);
+    return operation;
+  }
+
+  describe.each(['checkout', 'checkoutDetached', 'checkoutRemote', 'switchPrevious', 'createAndCheckoutBranch'] as const)(
+    '%s command log', (kind) => {
+      it.each(['operationCompleted', 'operationCancelled', 'error'] as const)(
+        'only shows the captured log on failure, with outcome %s', (terminalType) => {
+          const operation = startBranchSwitch(kind);
+          act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+            type: 'operationLog', requestId: operation.requestId,
+            repositoryId: operation.repositoryId, text: '$ git switch feature\ncheckout output\n',
+          } })));
+          expect(screen.queryByRole('region', { name: 'Git command log' })).not.toBeInTheDocument();
+          expect(screen.getByRole('button', { name: 'Fetch remotes' })).toBeDisabled();
+          act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+            type: terminalType, requestId: operation.requestId, repositoryId: operation.repositoryId,
+            message: 'Checkout result.', ...(terminalType === 'error' ? { detail: 'error: local changes would be overwritten' } : {}),
+          } })));
+          expect(screen.getByRole('button', { name: 'Fetch remotes' })).toBeEnabled();
+          if (terminalType === 'error') {
+            expect(screen.getByRole('log')).toHaveTextContent('checkout output');
+            expect(screen.getByRole('log')).toHaveTextContent('local changes would be overwritten');
+            expect(screen.getByRole('status')).toHaveTextContent('Failed');
+            fireEvent.click(screen.getByRole('button', { name: 'Close Git command log' }));
+          }
+          expect(screen.queryByRole('region', { name: 'Git command log' })).not.toBeInTheDocument();
+        },
+      );
+    },
+  );
+
+  it.each(['operationCompleted', 'operationCancelled', 'error'] as const)(
+    'retains streamed command logs after %s until manually closed', (terminalType) => {
+      initializeCommitRangeFixture();
+      fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+      const operation = postedMessages.find((message) => message.type === 'runOperation');
+      if (!operation || operation.type !== 'runOperation') throw new Error('Missing operation');
+      const sendLog = (text: string, requestId = operation.requestId): void => {
+        act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+          type: 'operationLog', requestId, repositoryId: operation.repositoryId, text,
+        } })));
+      };
+      sendLog('$ git fetch --all --prune\n');
+      sendLog('Fetching origin\n');
+      sendLog('stale output', 'previous-operation');
+      expect(screen.getByRole('region', { name: 'Git command log' })).toHaveTextContent('Fetching origin');
+      expect(screen.queryByText(/stale output/u)).not.toBeInTheDocument();
+      act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+        type: terminalType, requestId: operation.requestId, repositoryId: operation.repositoryId,
+        message: 'Fetch finished.', ...(terminalType === 'error' ? { detail: 'fatal: remote unavailable' } : {}),
+      } })));
+      expect(screen.getByRole('region', { name: 'Git command log' })).toHaveTextContent('$ git fetch');
+      expect(screen.getByRole('status')).toHaveTextContent(
+        terminalType === 'error' ? 'Failed' : terminalType === 'operationCancelled' ? 'Cancelled' : 'Completed',
+      );
+      if (terminalType === 'error') expect(screen.getByRole('log')).toHaveTextContent('fatal: remote unavailable');
+      vi.useFakeTimers();
+      act(() => vi.advanceTimersByTime(60_000));
+      expect(screen.getByRole('region', { name: 'Git command log' })).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'Close Git command log' }));
+      expect(screen.queryByRole('region', { name: 'Git command log' })).not.toBeInTheDocument();
+    },
+  );
+
+  it('bounds retained output and leaves copy shortcuts available in the command log', () => {
+    initializeCommitRangeFixture();
+    fireEvent.click(screen.getByText('newest commit'));
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+    const operation = postedMessages.find((message) => message.type === 'runOperation');
+    if (!operation || operation.type !== 'runOperation') throw new Error('Missing operation');
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'operationLog', requestId: operation.requestId, repositoryId: operation.repositoryId,
+      text: `old output\n${'x'.repeat(300_000)}\nlatest output\n`,
+    } })));
+    const body = screen.getByRole('log');
+    expect(body.textContent?.length).toBeLessThan(270_000);
+    expect(body).toHaveTextContent('[Earlier output truncated]');
+    expect(body).toHaveTextContent('latest output');
+    expect(body).not.toHaveTextContent('old output');
+    fireEvent.keyDown(body, { key: 'c', ctrlKey: true });
+    expect(postedMessages.filter((message) => message.type === 'copyToClipboard')).toHaveLength(0);
+  });
+
+  it('keeps a dismissed running log closed without releasing the operation lock', () => {
+    initializeCommitRangeFixture();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+    const operation = postedMessages.find((message) => message.type === 'runOperation');
+    if (!operation || operation.type !== 'runOperation') throw new Error('Missing operation');
+    fireEvent.click(screen.getByRole('button', { name: 'Close Git command log' }));
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'operationLog', requestId: operation.requestId, repositoryId: operation.repositoryId, text: 'more output\n',
+    } })));
+    expect(screen.queryByRole('log')).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Fetch remotes' })).toBeDisabled();
+    completeLatestOperation();
+    fireEvent.click(screen.getByRole('button', { name: 'Fetch remotes' }));
+    expect(screen.getByRole('region', { name: 'Git command log' })).toBeInTheDocument();
+    expect(screen.getByRole('log')).not.toHaveTextContent('more output');
+  });
+
   it('exposes the actual changed-files width so filters can reserve global toolbar space', () => {
     initializeCommitRangeFixture();
     const shell = document.querySelector<HTMLElement>('.workbench-shell');
@@ -1746,7 +1877,7 @@ describe('WorkbenchApp', () => {
       );
     });
 
-    expect(screen.getByText('Running Git operation…')).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Git command log' })).toHaveTextContent('Running');
     expect(fetchButton).toBeDisabled();
     fireEvent.click(fetchButton);
     expect(postedMessages.filter((message) => message.type === 'runOperation')).toHaveLength(1);
