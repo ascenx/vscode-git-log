@@ -2,6 +2,22 @@
 
 All notable changes to Git Log are documented in this file.
 
+## 0.1.5
+
+### Added
+
+- Added an in-panel `Git command log` showing the executed command, streamed output, exit status, and operation result. The latest operation's log is kept per repository until dismissed or replaced by another operation.
+
+### Changed
+
+- Replaced Git operation progress notifications with the command log. Checkout, switching back, and creating and checking out a branch show the log only on failure.
+- Command logs redact URL user information, retain bounded output, and follow new output only while scrolled to the bottom.
+
+### Fixed
+
+- Merge and rebase actions on local branches now use the full branch reference, preventing Git from selecting a tag with the same name.
+- Date-filtered branch statistics no longer omit in-range ancestors when commit timestamps are out of order, including across pages with no matching commits. Git 2.27 compatibility is preserved.
+
 ## 0.1.4
 
 ### Added

@@ -21,14 +21,13 @@ Git Log 支持 VS Code 1.85.2 及更高版本，同时要求 Git 2.27 或更高�
 code --install-extension ascenx.git-log
 ```
 
-## v0.1.4 更新
+## v0.1.5 更新
 
-- **分支统计：** 点击 `Statistics` 查看人员排名、Commit 和 Merge 次数、新增、删除与净增行数。支持 `Today`、`Last 7 Days`（默认）、`Last 30 Days` 和 `All`，自然日范围使用本机时区，远程工作区也保持一致。
-- **Rebase 拉取：** `Pull (Rebase)` 使用当前分支的上游，`Pull (Rebase) from…` 可指定 Remote 和分支。
-- **Merge 冲突控制：** `Merging` 状态行提供解决冲突后的 `Continue` 和需确认的 `Abort`。
-- 界面文案与日期格式统一使用英文，并修复工具栏按钮与筛选项重叠的问题。
+- **Git 命令日志：** 面板内的 `Git command log` 展示执行命令、实时输出、退出状态及操作结果。各仓库保留最近一次操作的日志，直到手动关闭或开始新操作；切换分支等操作仅在失败时显示日志。
+- **准确的分支目标：** Merge 和 Rebase 始终使用选中的本地分支，避免误用同名 Tag。
+- **准确的日期统计：** 即使 Commit 时间不按父子顺序递增，也能统计时间范围内的祖先提交，包括跨分页的情况。
 
-完整说明见 [Changelog](CHANGELOG.md#014)。
+完整说明见 [Changelog](CHANGELOG.md#015)。
 
 ## 功能截图
 
@@ -97,6 +96,7 @@ code --install-extension ascenx.git-log
 - 支持使用 Shift+单击或 Shift+方向键连续多选 Commit，也可使用 Ctrl/Cmd+单击逐个切换非连续选区；Changed Files 会合并所有选中 Commit，`Drop commits…` 和 `Squash commits…` 仍仅对连续选区开放。Squash 输入框会按界面从上到下预填所有选中 Commit 的完整消息。历史改写要求工作区干净并二次确认，同时拒绝 Root Commit、Merge Commit、过期选区，以及确认期间发生的当前分支或 HEAD 变化。
 - 非当前 Local Branch 的右键菜单提供需要二次确认的 `Force Delete…`；普通删除因分支未合并而失败时，也会提供警告色的强制删除恢复按钮。错误提示固定展示五秒后自动关闭。
 - 同 common Git dir 写操作串行、按仓库维护 Webview in-flight 锁、危险操作模态确认、Git 错误分类、脱敏 Output Channel 和完成后重新读取 Git 状态。工作区重新扫描期间会保留进行中的操作锁，操作后刷新被取消也不会让右键菜单操作一直锁定。
+- 面板内的 `Git command log` 按仓库展示最近一次操作的命令、实时输出、退出状态和结果，日志保留到手动关闭或开始新操作；成功切换分支时不显示日志。
 - Pane/Column 拖动、Pane 折叠与 workspace 宽高持久化；Commit Details 可在全宽底部和 Changed Files 底部之间切换，位置会跨面板会话保留；Commit、Author、Date、Refs 四列固定展示，深分页选择和滚动位置可在重开面板后恢复。
 - Commit 与 Refs 等表格列的分隔线可直接拖动并持久化宽度；Changed Files 支持深路径横向滚动，增删行数分别使用绿色和红色。
 - Changed Files 单击预览、Tree/List、Show Diff、Open File at Revision、Open Current File、Copy Path，以及 Commit/Ref/File 上下文菜单；菜单支持外部点击和执行后自动关闭。
@@ -156,6 +156,7 @@ npm run package
 - Pane 和 Commit 列可鼠标拖动，也可聚焦分隔条后使用方向键调整；工具栏可折叠 Refs/Changed Files，Commit、Author、Date、Refs 始终全部展示。
 - User 筛选会根据仓库的 `git config user.name/user.email` 始终置顶 `Me（当前 Git 用户）`，并优先使用邮箱过滤；顶部工具按钮均提供悬停说明。
 - Refresh 只读取本地状态；Fetch、Pull、Push 会访问用户现有 remote，并复用系统 credential helper/SSH Agent。
+- 使用 `Git command log` 查看操作输出和结果。向上滚动可暂停自动跟随，回到底部后恢复，点击 × 关闭日志；关闭运行中的日志不会取消操作。
 - 顶部更多操作中的 `Pull (Rebase)` 执行 `git pull --rebase`，使用当前分支配置的上游；原有 `Pull` 仍执行 `git pull`，遵循现有 Git 配置。
 - 使用 `Pull (Rebase) from…` 可选择已配置的 Remote 并填写分支名，执行 `git pull --rebase <remote> <branch>`，不会修改当前分支的上游配置。
 - 顶部 `Stashes` 用于创建、查看、Apply、Pop 或 Drop 暂存工作。
@@ -164,7 +165,7 @@ npm run package
 
 - 所有 Git 命令使用 `spawn` 参数数组且不开 shell。
 - 扩展不保存密码、Token 或 SSH 私钥；remote 认证完全交给 Git。
-- Output Channel 会脱敏 URL userinfo，不记录文件内容或完整环境变量。
+- Output Channel 会脱敏 URL userinfo，不记录文件内容或完整环境变量。命令日志也会脱敏 URL userinfo。
 - Hard Reset、Force Push with Lease、Branch Delete、Force Delete 等危险操作会显示仓库和实际目标并要求确认。
 - Force Push 的目标解析、确认与执行都在同一 common Git dir 队列锁内完成，固定 source object ID，并拒绝隐式或非完整目标 refspec。
 - 文本历史扫描单次 stdout 上限为 64 MiB，rolling match cache 有界，Webview commit window 受 `maxCachedCommits` 限制。

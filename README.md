@@ -21,14 +21,13 @@ You can also install it from the command line:
 code --install-extension ascenx.git-log
 ```
 
-## What's new in v0.1.4
+## What's new in v0.1.5
 
-- **Branch statistics:** Open `Statistics` for author rankings, commit and merge counts, and added/deleted/net lines. Choose `Today`, `Last 7 Days` (default), `Last 30 Days`, or `All`. Calendar periods follow your local time zone, including in remote workspaces.
-- **Pull with rebase:** Use `Pull (Rebase)` for the configured upstream or `Pull (Rebase) from…` for a specific remote and branch.
-- **Merge conflict controls:** The `Merging` row provides `Continue` after conflicts are resolved and a confirmed `Abort` action.
-- English UI text and date formatting, plus toolbar spacing fixes that prevent overlap with the filters.
+- **Git command log:** View the executed command, streamed output, exit status, and result directly in the panel. The latest log stays available per repository until dismissed or replaced by another operation; branch-switching operations show it only on failure.
+- **Correct branch targets:** Merge and rebase use the selected local branch even when a tag has the same name.
+- **Accurate date statistics:** In-range ancestor commits are counted even when commit timestamps are out of order, including across pagination boundaries.
 
-See the [changelog](CHANGELOG.md#014) for details.
+See the [changelog](CHANGELOG.md#015) for details.
 
 ## Screenshots
 
@@ -97,6 +96,7 @@ The current version covers Milestones 0–6 and the editor history work from Mil
 - Commits can be selected as a contiguous range with Shift+click or Shift+Arrow keys, or toggled individually with Ctrl/Cmd+click. Changed Files combines every selected commit; Drop and Squash remain limited to contiguous ranges. Squash preloads the selected full commit messages in visible top-to-bottom order. History rewrites require a clean worktree and explicit confirmation, and reject root commits, merge commits, stale selections, and changes to the active branch or HEAD during confirmation.
 - Local Branch context menus provide a confirmed `Force Delete…` action for non-current branches. Normal deletion failures for unmerged branches also offer a warning-colored Force Delete recovery action, and error notices remain visible for five seconds before closing automatically.
 - Serialized writes per common Git directory, per-repository Webview operation locks, destructive-operation confirmation dialogs, classified Git errors, redacted Output Channel diagnostics, and post-operation repository refreshes. Active operation locks survive workspace rescans, and cancelled post-operation refreshes no longer leave context-menu actions locked.
+- An in-panel `Git command log` shows the command, streamed output, exit status, and result of the latest operation per repository. Output remains available until dismissed or replaced by another operation; successful branch-switching operations keep the log hidden.
 - Draggable panes and columns, collapsible panes, and workspace-scoped width and height persistence. Commit Details can switch between the full-width bottom area and the bottom of Changed Files, with its placement retained across panel sessions. Commit, Author, Date, and Refs columns are always visible, and deep-page selections and scroll positions survive reopening the panel.
 - Resizable Commit and Refs table columns with persisted widths. Changed Files supports horizontal scrolling for deep paths, with additions in green and deletions in red.
 - Changed Files preview, Tree/List modes, Show Diff, Open File at Revision, Open Current File, Copy Path, and Commit/Ref/File context menus. Menus close on outside clicks and after executing an enabled action.
@@ -156,6 +156,7 @@ npm run package
 - Drag pane and commit-column separators with the mouse, or focus a separator and adjust it with the arrow keys. Toolbar actions can collapse Refs and Changed Files; Commit, Author, Date, and Refs remain available.
 - The User filter pins `Me (current Git user)` to the top using the repository's `git config user.name/user.email`, preferring email matching. Toolbar buttons include hover descriptions.
 - Refresh reads local repository state only. Fetch, Pull, and Push access the configured remote and reuse the system credential helper or SSH Agent.
+- Use `Git command log` to inspect operation output and results. Scroll up to pause automatic following, return to the bottom to resume, or click × to close the log; closing a running log does not cancel the operation.
 - In More actions, `Pull (Rebase)` runs `git pull --rebase` against the current branch's configured upstream. `Pull` continues to run `git pull` using the existing Git configuration.
 - Use `Pull (Rebase) from…` to select a configured remote and enter a branch name. It runs `git pull --rebase <remote> <branch>` without changing the current branch's upstream configuration.
 - Use `Stashes` to create, inspect, apply, pop, or drop saved work.
@@ -164,7 +165,7 @@ npm run package
 
 - Every Git command uses a `spawn` argument array without a shell.
 - The extension never stores passwords, tokens, or SSH private keys. Remote authentication is delegated to Git.
-- The Output Channel redacts URL user information and does not log file contents or complete environment variables.
+- The Output Channel redacts URL user information and does not log file contents or complete environment variables. The command log also redacts URL user information.
 - Hard Reset, Force Push with Lease, Branch Delete, Force Delete, and other destructive operations show the repository and exact target before confirmation.
 - Force-push target resolution, confirmation, and execution occur under the same common Git directory queue lock, pin the source object ID, and reject implicit or incomplete target refspecs.
 - A text-history scan is limited to 64 MiB of stdout, the rolling match cache is bounded, and the Webview commit window respects `maxCachedCommits`.
