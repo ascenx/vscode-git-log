@@ -60,9 +60,9 @@ export class BranchStatisticsService {
           '--numstat',
           '-z',
           '-M',
-          '--format=%x00%H%x00%P%x00%aN%x00%aE%x00',
-          ...(bounds.dateFrom === undefined ? [] : [`--since=@${String(bounds.dateFrom)}`]),
-          ...(bounds.dateTo === undefined ? [] : [`--until=@${String(bounds.dateTo)}`]),
+          // Filter dates after traversal: --since can prune in-range ancestors with newer dates.
+          // --since-as-filter is unavailable in the minimum supported Git version (2.27).
+          '--format=%x00%H%x00%P%x00%aN%x00%aE%x00%ct%x00',
           `--max-count=${String(PAGE_SIZE)}`,
           `--skip=${String(skip)}`,
           '--end-of-options',
@@ -86,14 +86,21 @@ export class BranchStatisticsService {
           const parents = fields[index + 2]!;
           const authorName = fields[index + 3]!;
           const authorEmail = fields[index + 4]!;
+          const committedAt = Number(fields[index + 5]);
+          // Pagination counts all visited commits, including those outside the date range.
+          commits++;
+          index += 5;
+          author = undefined;
+          if (
+            (bounds.dateFrom !== undefined && committedAt < bounds.dateFrom) ||
+            (bounds.dateTo !== undefined && committedAt > bounds.dateTo)
+          ) continue;
           const key = JSON.stringify([authorName, authorEmail]);
           author = authors.get(key) ?? { authorName, authorEmail, ...emptyCounts() };
           authors.set(key, author);
           merge = parents.includes(' ');
           author.commits++;
           if (merge) author.merges++;
-          commits++;
-          index += 4;
           continue;
         }
         const stat = /^\n?(\d+|-)\t(\d+|-)\t([\s\S]*)$/u.exec(field);

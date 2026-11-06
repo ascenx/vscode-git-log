@@ -155,6 +155,41 @@ describe('branch statistics', () => {
     expect(local).toMatchObject(localRange);
   });
 
+  it('counts in-range ancestors beyond a commit with an earlier committer date', async () => {
+    const { cwd, git, service } = await fixture();
+    for (const [file, content, author, date] of [
+      ['root.txt', 'first\nsecond\n', 'Alice', '2026-11-03T10:00:00Z'],
+      ['excluded.txt', 'ignored\n', 'Bob', '2026-10-01T10:00:00Z'],
+      ['tip.txt', 'third\n', 'Alice', '2026-11-04T10:00:00Z'],
+    ] as const) {
+      await writeFile(join(cwd, file), content);
+      await git(['add', '.']);
+      await git(['commit', '-m', file], author, date);
+    }
+    const result = await service.getStatistics(cwd, {
+      revisions: [await git(['rev-parse', 'HEAD'])], period: '7d', now,
+    });
+    expect(result.totals).toEqual({ commits: 2, merges: 0, additions: 3, deletions: 0, netAdditions: 3 });
+    expect(result.authors).toEqual([
+      { authorName: 'Alice', authorEmail: 'alice@test', ...result.totals },
+    ]);
+  });
+
+  it('keeps scanning past a page with no commits in the date range', async () => {
+    const { git, service, cwd } = await fixture();
+    await git(['commit', '--allow-empty', '-m', 'in-range ancestor']);
+    for (let index = 0; index < 200; index++) {
+      await git(['commit', '--allow-empty', '-m', `excluded ${String(index)}`], 'Bob', '2026-10-01T00:00:00Z');
+    }
+    const result = await service.getStatistics(cwd, {
+      revisions: [await git(['rev-parse', 'HEAD'])], period: '7d', now,
+    });
+    expect(result.totals.commits).toBe(1);
+    expect(result.authors).toEqual([
+      { authorName: 'Alice', authorEmail: 'alice@test', ...result.totals },
+    ]);
+  });
+
   it('returns empty totals for no selected revisions and rejects invalid object IDs', async () => {
     const { service, cwd } = await fixture();
     expect(

@@ -4174,7 +4174,7 @@ export function App() {
                         disabled={!selectedRepository?.currentBranch || contextMenu.ref.isCurrent}
                         onClick={() =>
                           runOperation(
-                            { kind: 'merge', ref: contextMenu.ref.shortName },
+                            { kind: 'merge', ref: contextMenu.ref.fullName },
                             contextMenu.repositoryId,
                           )
                         }
@@ -4187,7 +4187,7 @@ export function App() {
                         disabled={!selectedRepository?.currentBranch || contextMenu.ref.isCurrent}
                         onClick={() =>
                           runOperation(
-                            { kind: 'rebase', ref: contextMenu.ref.shortName },
+                            { kind: 'rebase', ref: contextMenu.ref.fullName },
                             contextMenu.repositoryId,
                           )
                         }

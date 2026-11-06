@@ -5126,6 +5126,31 @@ describe('WorkbenchApp', () => {
     expect(viewport.scrollTop).toBe(84);
   });
 
+  it.each([
+    ['merge', 'Merge into Current'],
+    ['rebase', 'Rebase Current onto'],
+  ] as const)('targets the selected branch for %s when a tag has the same name', (kind, label) => {
+    const { middle, oldest, commits } = initializeCommitRangeFixture();
+    act(() => window.dispatchEvent(new MessageEvent('message', { data: {
+      type: 'repositoryData', requestId: 'same-name-refs', repositoryId: 'repo-commit-range',
+      refs: [
+        { fullName: 'refs/heads/feature', shortName: 'feature', kind: 'local',
+          target: middle, ahead: 0, behind: 0, isCurrent: false },
+        { fullName: 'refs/tags/feature', shortName: 'feature', kind: 'tag',
+          target: oldest, ahead: 0, behind: 0, isCurrent: false },
+      ],
+      commits, filters: { text: '', branches: [], authors: [], paths: [] }, replace: true, hasMore: false,
+    } })));
+
+    fireEvent.contextMenu(screen.getByTitle('refs/heads/feature'));
+    fireEvent.click(screen.getByRole('menuitem', { name: label }));
+
+    expect(postedMessages).toContainEqual(expect.objectContaining({
+      type: 'runOperation', repositoryId: 'repo-commit-range',
+      operation: { kind, ref: 'refs/heads/feature' },
+    }));
+  });
+
   it('groups remote refs, collapses ref groups, and locates a ref tip with keyboard navigation', () => {
     render(<App />);
     const mainHash = 'a'.repeat(40);
